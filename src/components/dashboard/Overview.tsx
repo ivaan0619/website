@@ -1,49 +1,158 @@
 import React, { useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
-import { TrendingUp, TrendingDown, DollarSign, Activity, Copy, CheckCircle, Bot, ExternalLink, Wifi, AlertTriangle, RefreshCw, Clock, BarChart3, Target, Zap } from 'lucide-react';
-import { ordersAPI, brokerAPI } from '../../services/api';
+import { TrendingUp, TrendingDown, DollarSign, Activity, Copy, CheckCircle, Bot, ExternalLink, Wifi, AlertTriangle, RefreshCw, Clock, BarChart3, Target, Zap, Crown, Lock, ArrowRight } from 'lucide-react';
+import { ordersAPI, brokerAPI, subscriptionAPI } from '../../services/api';
 import toast from 'react-hot-toast';
 import { format } from 'date-fns';
+import { useNavigate } from 'react-router-dom';
+
+interface Subscription {
+  id: string;
+  planId: string;
+  planName: string;
+  status: string;
+  expiresAt: string;
+  isActive: boolean;
+}
 
 const Overview: React.FC = () => {
   const [webhookCopied, setWebhookCopied] = useState<number | null>(null);
   const [pnlData, setPnlData] = useState<any>(null);
   const [positions, setPositions] = useState<any[]>([]);
+  const [holdings, setHoldings] = useState<any[]>([]);
   const [recentOrders, setRecentOrders] = useState<any[]>([]);
   const [brokerConnections, setBrokerConnections] = useState<any[]>([]);
+  const [subscription, setSubscription] = useState<Subscription | null>(null);
   const [loading, setLoading] = useState(true);
   const [reconnectingConnection, setReconnectingConnection] = useState<number | null>(null);
+  const navigate = useNavigate();
 
   useEffect(() => {
-    fetchDashboardData();
+    checkSubscriptionAndFetchData();
   }, []);
+
+  const checkSubscriptionAndFetchData = async () => {
+    try {
+      // First check subscription status
+      const subscriptionResponse = await subscriptionAPI.getCurrentSubscription();
+      const currentSubscription = subscriptionResponse.data.subscription;
+      setSubscription(currentSubscription);
+
+      // Check if subscription is active
+      const isSubscriptionActive = currentSubscription && 
+        currentSubscription.isActive && 
+        new Date(currentSubscription.expiresAt) > new Date();
+
+      if (!isSubscriptionActive) {
+        // If subscription is not active, only show basic info
+        setLoading(false);
+        return;
+      }
+
+      // If subscription is active, fetch all data
+      await fetchDashboardData();
+    } catch (error) {
+      console.error('Failed to check subscription:', error);
+      setLoading(false);
+    }
+  };
 
   const fetchDashboardData = async () => {
     try {
-      const [pnlResponse, positionsResponse, ordersResponse, connectionsResponse] = await Promise.all([
-        ordersAPI.getPnL({ period: '1M' }),
-        ordersAPI.getPositions(),
-        ordersAPI.getOrders({ limit: 5 }),
+      const [connectionsResponse] = await Promise.all([
         brokerAPI.getConnections()
       ]);
 
-      setPnlData(pnlResponse.data);
-      setPositions(positionsResponse.data.positions);
-      setRecentOrders(ordersResponse.data.orders);
       const connections = connectionsResponse.data.connections;
       setBrokerConnections(connections);
       
-      console.log('=== BROKER CONNECTIONS DEBUG ===');
-      console.log('All connections:', connections);
-      console.log('Active connections:', connections.filter(c => c.is_active));
-      console.log('Active connections with webhook:', connections.filter(c => c.is_active && c.webhook_url));
-      console.log('Has active connection with webhook:', connections.some(c => c.is_active && c.webhook_url));
-      console.log('================================');
+      // Only fetch data from active and authenticated connections
+      const activeConnections = connections.filter((c: any) => c.is_active && c.is_authenticated);
+      
+      if (activeConnections.length > 0) {
+        // Fetch data in parallel
+        const dataPromises = [
+          ordersAPI.getPnL({ period: '1M' }).catch(() => ({ data: null })),
+          fetchAllPositions(activeConnections).catch(() => []),
+          fetchAllHoldings(activeConnections).catch(() => []),
+          ordersAPI.getOrders({ limit: 5 }).catch(() => ({ data: { orders: [] } }))
+        ];
+
+        const [pnlResponse, allPositions, allHoldings, ordersResponse] = await Promise.all(dataPromises);
+
+        setPnlData(pnlResponse.data);
+        setPositions(allPositions);
+        setHoldings(allHoldings);
+        setRecentOrders(ordersResponse.data.orders);
+      }
     } catch (error) {
+      console.error('Failed to fetch dashboard data:', error);
       toast.error('Failed to fetch dashboard data');
     } finally {
       setLoading(false);
     }
+  };
+
+  const fetchAllPositions = async (connections: any[]) => {
+    const allPositions: any[] = [];
+    
+    for (const connection of connections) {
+      try {
+        const response = await brokerAPI.getPositions(connection.id);
+        if (response.data.positions && response.data.positions.length > 0) {
+          const formattedPositions = response.data.positions
+            .filter((pos: any) => Math.abs(pos.quantity || pos.net_quantity || 0) > 0)
+            .map((pos: any) => ({
+              symbol: pos.tradingsymbol || pos.symbol,
+              exchange: pos.exchange || 'NSE',
+              quantity: pos.quantity || pos.net_quantity || 0,
+              average_price: pos.average_price || pos.buy_price || 0,
+              current_price: pos.last_price || pos.ltp || 0,
+              pnl: pos.pnl || pos.unrealised || 0,
+              pnl_percentage: pos.pnl_percentage || 0,
+              product: pos.product || 'MIS',
+              broker_name: connection.broker_name,
+              connection_id: connection.id
+            }));
+          allPositions.push(...formattedPositions);
+        }
+      } catch (error) {
+        console.error(`Failed to fetch positions from ${connection.broker_name}:`, error);
+      }
+    }
+    
+    return allPositions;
+  };
+
+  const fetchAllHoldings = async (connections: any[]) => {
+    const allHoldings: any[] = [];
+    
+    for (const connection of connections) {
+      try {
+        const response = await brokerAPI.getHoldings(connection.id);
+        if (response.data.holdings && response.data.holdings.length > 0) {
+          const formattedHoldings = response.data.holdings
+            .filter((holding: any) => (holding.quantity || 0) > 0)
+            .map((holding: any) => ({
+              symbol: holding.tradingsymbol || holding.symbol,
+              exchange: holding.exchange || 'NSE',
+              quantity: holding.quantity || 0,
+              average_price: holding.average_price || 0,
+              current_price: holding.last_price || holding.ltp || 0,
+              pnl: holding.pnl || 0,
+              day_change: holding.day_change || 0,
+              day_change_percentage: holding.day_change_percentage || 0,
+              broker_name: connection.broker_name,
+              connection_id: connection.id
+            }));
+          allHoldings.push(...formattedHoldings);
+        }
+      } catch (error) {
+        console.error(`Failed to fetch holdings from ${connection.broker_name}:`, error);
+      }
+    }
+    
+    return allHoldings;
   };
 
   const copyWebhookUrl = (webhookUrl: string, connectionId: number) => {
@@ -59,7 +168,6 @@ const Overview: React.FC = () => {
       const response = await brokerAPI.reconnect(connectionId);
       
       if (response.data.loginUrl) {
-        // Open authentication window
         const authWindow = window.open(
           response.data.loginUrl,
           'reconnect-auth',
@@ -67,18 +175,15 @@ const Overview: React.FC = () => {
         );
 
         if (authWindow) {
-          // Check if window is closed every second
           const checkClosed = setInterval(() => {
             if (authWindow.closed) {
               clearInterval(checkClosed);
-              // Refresh connections to see if auth was completed
               setTimeout(() => {
-                fetchDashboardData();
+                checkSubscriptionAndFetchData();
               }, 2000);
             }
           }, 1000);
 
-          // Auto-close check after 5 minutes
           setTimeout(() => {
             if (!authWindow.closed) {
               authWindow.close();
@@ -89,16 +194,14 @@ const Overview: React.FC = () => {
           toast.error('Failed to open authentication window. Please check your popup blocker.');
         }
       } else {
-        // Direct reconnection successful
         toast.success('Reconnected successfully using stored credentials!');
-        fetchDashboardData();
+        checkSubscriptionAndFetchData();
       }
     } catch (error: any) {
       toast.error(error.response?.data?.error || 'Failed to reconnect');
       
-      // If it's a 404 error, refresh dashboard data to update UI state
       if (error.response?.status === 404) {
-        fetchDashboardData();
+        checkSubscriptionAndFetchData();
       }
     } finally {
       setReconnectingConnection(null);
@@ -154,10 +257,23 @@ const Overview: React.FC = () => {
     return 'text-bronze-600';
   };
 
+  const formatCurrency = (amount: number) => {
+    return new Intl.NumberFormat('en-IN', {
+      style: 'currency',
+      currency: 'INR',
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 0
+    }).format(amount);
+  };
+
+  const isSubscriptionActive = () => {
+    return subscription && subscription.isActive && new Date(subscription.expiresAt) > new Date();
+  };
+
   const stats = [
     {
       title: 'Total P&L',
-      value: `₹${pnlData?.summary?.totalPnL?.toLocaleString() || '0'}`,
+      value: `${formatCurrency(pnlData?.summary?.totalPnL || 0)}`,
       change: '+12.3%',
       trend: 'up',
       icon: DollarSign,
@@ -180,9 +296,9 @@ const Overview: React.FC = () => {
       color: 'from-blue-500 to-blue-600'
     },
     {
-      title: 'Total Trades',
-      value: pnlData?.summary?.totalTrades?.toString() || '0',
-      change: 'This month',
+      title: 'Total Holdings',
+      value: holdings.length.toString(),
+      change: `${holdings.filter(h => h.pnl > 0).length} profitable`,
       trend: 'up',
       icon: BarChart3,
       color: 'from-purple-500 to-purple-600'
@@ -197,24 +313,176 @@ const Overview: React.FC = () => {
     );
   }
 
+  // Show subscription required message if not active
+  if (!isSubscriptionActive()) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-cream-50 to-beige-100 p-6">
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="max-w-4xl mx-auto"
+        >
+          {/* Subscription Status */}
+          <motion.div
+            className="bg-white/90 backdrop-blur-xl rounded-3xl p-8 border border-beige-200 shadow-3d text-center mb-8"
+          >
+            <motion.div
+              animate={{ rotateY: [0, 360] }}
+              transition={{ duration: 2, repeat: Infinity, ease: "linear" }}
+              className="w-20 h-20 bg-gradient-to-r from-amber-500 to-bronze-600 rounded-full flex items-center justify-center mx-auto mb-6 shadow-3d"
+            >
+              <Crown className="w-10 h-10 text-white" />
+            </motion.div>
+            
+            <h1 className="text-3xl font-bold text-bronze-800 mb-4">
+              {subscription ? 'Subscription Expired' : 'Subscription Required'}
+            </h1>
+            
+            <p className="text-bronze-600 mb-6 max-w-2xl mx-auto">
+              {subscription 
+                ? `Your subscription expired on ${format(new Date(subscription.expiresAt), 'MMM dd, yyyy')}. Renew your subscription to continue using AutoTraderHub features.`
+                : 'You need an active subscription to access the dashboard and trading features. Choose a plan that fits your trading needs.'
+              }
+            </p>
+
+            {subscription && (
+              <div className="bg-red-50 border border-red-200 rounded-xl p-4 mb-6 max-w-md mx-auto">
+                <h3 className="font-semibold text-red-800 mb-2">Services Deactivated</h3>
+                <ul className="text-sm text-red-700 space-y-1">
+                  <li>• Webhook endpoints disabled</li>
+                  <li>• Real-time data updates stopped</li>
+                  <li>• Order execution suspended</li>
+                  <li>• Broker connections inactive</li>
+                </ul>
+              </div>
+            )}
+            
+            <div className="space-y-4">
+              <motion.button
+                onClick={() => navigate('/subscription')}
+                whileHover={{ scale: 1.05 }}
+                whileTap={{ scale: 0.95 }}
+                className="bg-gradient-to-r from-amber-500 to-bronze-600 text-white px-8 py-4 rounded-xl font-bold text-lg flex items-center justify-center space-x-2 hover:shadow-3d-hover transition-all shadow-3d mx-auto"
+              >
+                <Crown className="w-6 h-6" />
+                <span>{subscription ? 'Renew Subscription' : 'View Subscription Plans'}</span>
+                <ArrowRight className="w-6 h-6" />
+              </motion.button>
+              
+              <motion.button
+                onClick={() => navigate('/dashboard/brokers')}
+                whileHover={{ scale: 1.02 }}
+                whileTap={{ scale: 0.98 }}
+                className="bg-beige-100 text-bronze-700 px-6 py-3 rounded-xl font-medium hover:bg-beige-200 transition-colors border border-beige-200"
+              >
+                Manage Broker Connections
+              </motion.button>
+            </div>
+          </motion.div>
+
+          {/* Limited Broker Connections View */}
+          {brokerConnections.length > 0 && (
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.2 }}
+              className="bg-white/80 backdrop-blur-xl rounded-2xl p-6 border border-beige-200 shadow-3d"
+            >
+              <div className="flex items-center justify-between mb-6">
+                <h2 className="text-xl font-bold text-bronze-800 flex items-center">
+                  <Lock className="w-6 h-6 mr-2 text-amber-600" />
+                  Broker Connections (Inactive)
+                </h2>
+              </div>
+              
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                {brokerConnections.map((connection, index) => {
+                  const brokers = [
+                    { id: 'zerodha', name: 'Zerodha', logo: '🔥' },
+                    { id: 'upstox', name: 'Upstox', logo: '⚡' },
+                    { id: '5paisa', name: '5Paisa', logo: '💎' }
+                  ];
+                  const broker = brokers.find(b => b.id === connection.broker_name.toLowerCase());
+                  
+                  return (
+                    <motion.div
+                      key={connection.id}
+                      initial={{ opacity: 0, y: 30 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ delay: index * 0.1 }}
+                      className="bg-cream-50 rounded-2xl p-4 border border-beige-200 shadow-3d opacity-60"
+                    >
+                      <div className="flex items-start justify-between mb-3">
+                        <div className="flex items-center space-x-3">
+                          <div className="text-3xl opacity-50">
+                            {broker?.logo || '🏦'}
+                          </div>
+                          <div>
+                            <h3 className="font-bold text-bronze-800 capitalize">{connection.broker_name}</h3>
+                            {connection.connection_name && (
+                              <p className="text-xs text-bronze-600">{connection.connection_name}</p>
+                            )}
+                          </div>
+                        </div>
+                        
+                        <div className="inline-flex items-center space-x-2 px-3 py-1 rounded-full text-xs font-medium bg-red-100 text-red-600">
+                          <Lock className="w-3 h-3" />
+                          <span>Inactive</span>
+                        </div>
+                      </div>
+
+                      <div className="text-center py-4">
+                        <p className="text-sm text-bronze-600 mb-3">
+                          Activate subscription to use this connection
+                        </p>
+                        <motion.button
+                          onClick={() => navigate('/subscription')}
+                          whileHover={{ scale: 1.05 }}
+                          whileTap={{ scale: 0.95 }}
+                          className="text-xs bg-amber-500 text-white px-3 py-1 rounded hover:bg-amber-600 transition-colors"
+                        >
+                          Activate
+                        </motion.button>
+                      </div>
+                    </motion.div>
+                  );
+                })}
+              </div>
+            </motion.div>
+          )}
+        </motion.div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-cream-50 to-beige-100 p-6 space-y-8">
-      {/* Enhanced Welcome Section with 3D Effects */}
+      {/* Enhanced Welcome Section with Subscription Status */}
       <motion.div
         initial={{ opacity: 0, y: 20, rotateX: -10 }}
         animate={{ opacity: 1, y: 0, rotateX: 0 }}
         className="bg-gradient-to-r from-amber-500 to-bronze-600 rounded-3xl p-8 text-white relative overflow-hidden shadow-3d"
-        style={{ 
-          transformStyle: 'preserve-3d',
-        }}
       >
         <div className="absolute inset-0 bg-gradient-to-r from-amber-400/20 to-bronze-500/20 backdrop-blur-sm"></div>
-        <div className="relative z-10">
-          <h1 className="text-3xl md:text-4xl font-bold mb-3">Welcome back, Trader!</h1>
-          <p className="text-amber-100">Your automated trading dashboard is ready. Monitor your strategies and performance.</p>
+        <div className="relative z-10 flex items-center justify-between">
+          <div>
+            <h1 className="text-3xl md:text-4xl font-bold mb-3">Welcome back, Trader!</h1>
+            <p className="text-amber-100">Your automated trading dashboard is ready. Monitor your strategies and performance.</p>
+          </div>
+          
+          {subscription && (
+            <div className="bg-white/20 backdrop-blur-sm rounded-xl p-4 text-center">
+              <div className="flex items-center space-x-2 mb-2">
+                <Crown className="w-5 h-5 text-amber-200" />
+                <span className="text-amber-100 font-medium">{subscription.planName}</span>
+              </div>
+              <p className="text-xs text-amber-200">
+                Expires: {format(new Date(subscription.expiresAt), 'MMM dd, yyyy')}
+              </p>
+            </div>
+          )}
         </div>
         
-        {/* 3D Floating Elements */}
         <motion.div
           animate={{ 
             rotateY: [0, 360],
@@ -230,7 +498,7 @@ const Overview: React.FC = () => {
         />
       </motion.div>
 
-      {/* Enhanced Stats Grid with 3D Cards */}
+      {/* Enhanced Stats Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
         {stats.map((stat, index) => (
           <motion.div
@@ -244,9 +512,6 @@ const Overview: React.FC = () => {
               rotateX: 5,
             }}
             className="group bg-white/80 backdrop-blur-xl rounded-2xl p-6 border border-beige-200 hover:border-amber-300 transition-all duration-500 shadow-3d hover:shadow-3d-hover"
-            style={{ 
-              transformStyle: 'preserve-3d',
-            }}
           >
             <div className="flex items-center justify-between mb-4">
               <motion.div 
@@ -277,17 +542,14 @@ const Overview: React.FC = () => {
         transition={{ delay: 0.5 }}
         whileHover={{ scale: 1.01, rotateX: 2 }}
         className="bg-white/80 backdrop-blur-xl rounded-2xl p-6 border border-beige-200 shadow-3d"
-        style={{ 
-          transformStyle: 'preserve-3d',
-        }}
       >
         <div className="flex items-center justify-between mb-6">
           <h2 className="text-xl font-bold text-bronze-800 flex items-center">
             <Wifi className="w-6 h-6 mr-2 text-amber-600" />
-            Broker Connections ({brokerConnections.filter(c => c.is_active).length}/5)
+            Active Broker Connections ({brokerConnections.filter(c => c.is_active).length}/5)
           </h2>
           <motion.button
-            onClick={() => window.location.href = '/dashboard/brokers'}
+            onClick={() => navigate('/dashboard/brokers')}
             whileHover={{ scale: 1.05 }}
             whileTap={{ scale: 0.95 }}
             className="text-amber-600 hover:text-amber-500 text-sm font-medium transition-colors"
@@ -302,21 +564,9 @@ const Overview: React.FC = () => {
               .filter(connection => connection.is_active)
               .map((connection, index) => {
                 const brokers = [
-                  { 
-                    id: 'zerodha', 
-                    name: 'Zerodha', 
-                    logo: '🔥', 
-                  },
-                  { 
-                    id: 'upstox', 
-                    name: 'Upstox', 
-                    logo: '⚡', 
-                  },
-                  { 
-                    id: '5paisa', 
-                    name: '5Paisa', 
-                    logo: '💎', 
-                  }
+                  { id: 'zerodha', name: 'Zerodha', logo: '🔥' },
+                  { id: 'upstox', name: 'Upstox', logo: '⚡' },
+                  { id: '5paisa', name: '5Paisa', logo: '💎' }
                 ];
                 const broker = brokers.find(b => b.id === connection.broker_name.toLowerCase());
                 const statusInfo = getConnectionStatusInfo(connection);
@@ -329,7 +579,6 @@ const Overview: React.FC = () => {
                     transition={{ delay: index * 0.1 }}
                     whileHover={{ scale: 1.02, rotateY: 2 }}
                     className="bg-cream-50 rounded-2xl p-4 border border-beige-200 shadow-3d hover:shadow-3d-hover transition-all"
-                    style={{ transformStyle: 'preserve-3d' }}
                   >
                     <div className="flex items-start justify-between mb-3">
                       <div className="flex items-center space-x-3">
@@ -361,13 +610,11 @@ const Overview: React.FC = () => {
                       )}
                     </div>
 
-                    {/* Connection Status */}
                     <div className={`inline-flex items-center space-x-2 px-3 py-1 rounded-full text-xs font-medium mb-3 ${statusInfo.bgColor} ${statusInfo.color}`}>
                       <statusInfo.icon className="w-3 h-3" />
                       <span>{statusInfo.status}</span>
                     </div>
 
-                    {/* Webhook URL */}
                     {connection.webhook_url && (
                       <div className="mt-3">
                         <div className="flex items-center justify-between mb-1">
@@ -405,7 +652,7 @@ const Overview: React.FC = () => {
               Connect a broker account to see active connections here. You can connect up to 5 broker accounts.
             </p>
             <motion.button
-              onClick={() => window.location.href = '/dashboard/brokers'}
+              onClick={() => navigate('/dashboard/brokers')}
               whileHover={{ scale: 1.05 }}
               whileTap={{ scale: 0.95 }}
               className="inline-flex items-center space-x-2 bg-gradient-to-r from-amber-500 to-bronze-600 text-white px-6 py-3 rounded-xl font-medium hover:shadow-3d-hover transition-all shadow-3d"
@@ -425,17 +672,14 @@ const Overview: React.FC = () => {
           transition={{ delay: 0.6 }}
           whileHover={{ scale: 1.005 }}
           className="bg-white/80 backdrop-blur-xl rounded-2xl p-6 border border-beige-200 shadow-3d"
-          style={{ 
-            transformStyle: 'preserve-3d',
-          }}
         >
           <div className="flex items-center justify-between mb-6">
             <h2 className="text-xl font-bold text-bronze-800 flex items-center">
               <Activity className="w-6 h-6 mr-2 text-amber-600" />
-              Active Positions
+              Active Positions ({positions.length})
             </h2>
             <button 
-              onClick={() => window.location.href = '/dashboard/orders'}
+              onClick={() => navigate('/dashboard/positions')}
               className="text-amber-600 hover:text-amber-500 font-medium transition-colors"
             >
               View All
@@ -467,16 +711,16 @@ const Overview: React.FC = () => {
                   </div>
                   <div className="flex justify-between">
                     <span className="text-bronze-600">Avg Price:</span>
-                    <span className="text-bronze-800 font-medium">₹{position.average_price}</span>
+                    <span className="text-bronze-800 font-medium">{formatCurrency(position.average_price)}</span>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-bronze-600">Current:</span>
-                    <span className="text-bronze-800 font-medium">₹{position.current_price}</span>
+                    <span className="text-bronze-800 font-medium">{formatCurrency(position.current_price)}</span>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-bronze-600">P&L:</span>
                     <span className={`font-bold ${getPnLColor(position.pnl)}`}>
-                      {position.pnl > 0 ? '+' : ''}₹{position.pnl}
+                      {position.pnl > 0 ? '+' : ''}{formatCurrency(position.pnl)}
                     </span>
                   </div>
                 </div>
@@ -486,21 +730,86 @@ const Overview: React.FC = () => {
         </motion.div>
       )}
 
-      {/* Enhanced Recent Trades Table */}
+      {/* Enhanced Holdings Section */}
+      {holdings.length > 0 && (
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.7 }}
+          whileHover={{ scale: 1.005 }}
+          className="bg-white/80 backdrop-blur-xl rounded-2xl p-6 border border-beige-200 shadow-3d"
+        >
+          <div className="flex items-center justify-between mb-6">
+            <h2 className="text-xl font-bold text-bronze-800 flex items-center">
+              <BarChart3 className="w-6 h-6 mr-2 text-amber-600" />
+              Holdings ({holdings.length})
+            </h2>
+            <button 
+              onClick={() => navigate('/dashboard/positions')}
+              className="text-amber-600 hover:text-amber-500 font-medium transition-colors"
+            >
+              View All
+            </button>
+          </div>
+          
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {holdings.slice(0, 6).map((holding, index) => (
+              <motion.div
+                key={index}
+                initial={{ opacity: 0, x: -20 }}
+                animate={{ opacity: 1, x: 0 }}
+                transition={{ delay: index * 0.1 }}
+                whileHover={{ scale: 1.02 }}
+                className="bg-cream-50 rounded-xl p-4 border border-beige-200 shadow-3d hover:shadow-3d-hover transition-all"
+              >
+                <div className="flex items-center justify-between mb-2">
+                  <h4 className="font-bold text-bronze-800">{holding.symbol}</h4>
+                  <span className="text-sm font-medium text-blue-600">HOLDING</span>
+                </div>
+                <div className="space-y-1 text-sm">
+                  <div className="flex justify-between">
+                    <span className="text-bronze-600">Qty:</span>
+                    <span className="text-bronze-800 font-medium">{holding.quantity}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-bronze-600">Avg Price:</span>
+                    <span className="text-bronze-800 font-medium">{formatCurrency(holding.average_price)}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-bronze-600">Current:</span>
+                    <span className="text-bronze-800 font-medium">{formatCurrency(holding.current_price)}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-bronze-600">P&L:</span>
+                    <span className={`font-bold ${getPnLColor(holding.pnl)}`}>
+                      {holding.pnl > 0 ? '+' : ''}{formatCurrency(holding.pnl)}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-bronze-600">Day Change:</span>
+                    <span className={`font-medium ${getPnLColor(holding.day_change)}`}>
+                      {holding.day_change > 0 ? '+' : ''}{formatCurrency(holding.day_change)}
+                    </span>
+                  </div>
+                </div>
+              </motion.div>
+            ))}
+          </div>
+        </motion.div>
+      )}
+
+      {/* Enhanced Recent Orders Table */}
       <motion.div
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
-        transition={{ delay: 0.7 }}
+        transition={{ delay: 0.8 }}
         whileHover={{ scale: 1.005 }}
         className="bg-white/80 backdrop-blur-xl rounded-2xl p-6 border border-beige-200 shadow-3d"
-        style={{ 
-          transformStyle: 'preserve-3d',
-        }}
       >
         <div className="flex items-center justify-between mb-6">
-          <h2 className="text-xl font-bold text-bronze-800">Recent Trades</h2>
+          <h2 className="text-xl font-bold text-bronze-800">Recent Orders</h2>
           <button 
-            onClick={() => window.location.href = '/dashboard/orders'}
+            onClick={() => navigate('/dashboard/orders')}
             className="text-amber-600 hover:text-amber-500 font-medium transition-colors"
           >
             View All
@@ -539,10 +848,10 @@ const Overview: React.FC = () => {
                       </span>
                     </td>
                     <td className="py-3 px-4 text-bronze-700">{order.quantity}</td>
-                    <td className="py-3 px-4 text-bronze-700">₹{order.executed_price || order.price}</td>
+                    <td className="py-3 px-4 text-bronze-700">{formatCurrency(order.executed_price || order.price)}</td>
                     <td className="py-3 px-4">
                       <span className={`font-medium ${getPnLColor(order.pnl)}`}>
-                        {order.pnl > 0 ? '+' : ''}₹{order.pnl}
+                        {order.pnl > 0 ? '+' : ''}{formatCurrency(order.pnl)}
                       </span>
                     </td>
                     <td className="py-3 px-4">
@@ -565,7 +874,7 @@ const Overview: React.FC = () => {
         ) : (
           <div className="text-center py-8">
             <TrendingUp className="w-16 h-16 text-amber-400/50 mx-auto mb-4" />
-            <h3 className="text-lg font-medium text-bronze-800 mb-2">No Recent Trades</h3>
+            <h3 className="text-lg font-medium text-bronze-800 mb-2">No Recent Orders</h3>
             <p className="text-bronze-600">
               Your recent trading activity will appear here once you start placing orders.
             </p>

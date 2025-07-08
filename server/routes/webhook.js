@@ -1,5 +1,6 @@
 import express from 'express';
 import { db } from '../database/init.js';
+import { subscriptionAPI } from '../services/subscriptionService.js';
 import kiteService from '../services/kiteService.js';
 import orderStatusService from '../services/orderStatusService.js';
 import createLogger from '../utils/logger.js';
@@ -67,6 +68,36 @@ router.post('/:userId/:webhookId', async (req, res) => {
 
   logger.info(`Webhook received for user ${userId}, webhook ${webhookId}`, { payload });
   debugLogs.push(`📡 Webhook received for user ${userId}, webhook ${webhookId}`);
+
+  // Check subscription status first
+  try {
+    const user = await db.getAsync('SELECT id FROM users WHERE id = ?', [userId]);
+    if (!user) {
+      await logErrorStatus(logId, 'User not found', startTime, debugLogs);
+      return res.status(404).json({ error: 'User not found', debugLogs });
+    }
+
+    const subscription = await db.getAsync(
+      'SELECT * FROM subscriptions WHERE user_id = ? AND status = ? ORDER BY created_at DESC LIMIT 1',
+      [userId, 'active']
+    );
+
+    const isSubscriptionActive = subscription && 
+      new Date(subscription.expires_at) > new Date();
+
+    if (!isSubscriptionActive) {
+      await logErrorStatus(logId, 'Subscription expired or inactive - webhook disabled', startTime, debugLogs);
+      return res.status(403).json({ 
+        error: 'Subscription required', 
+        message: 'Your subscription has expired. Webhook services are disabled.',
+        debugLogs 
+      });
+    }
+  } catch (subscriptionError) {
+    logger.error('Failed to check subscription status:', subscriptionError);
+    await logErrorStatus(logId, 'Failed to verify subscription status', startTime, debugLogs);
+    return res.status(500).json({ error: 'Subscription verification failed', debugLogs });
+  }
 
   let logId = null;
 

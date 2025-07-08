@@ -11,6 +11,7 @@ import subscriptionRoutes from './routes/subscription.js';
 import { initDatabase } from './database/init.js';
 import { createLogger, requestLoggingMiddleware } from './utils/logger.js';
 import orderStatusService from './services/orderStatusService.js';
+import subscriptionService from './services/subscriptionService.js';
 
 dotenv.config();
 
@@ -105,6 +106,27 @@ try {
     component: 'order_status_service'
   });
   // Don't exit, service can still function without real-time updates
+}
+
+// Initialize subscription monitoring
+try {
+  logger.info('Starting subscription monitoring service...');
+  
+  // Check for expired subscriptions every hour
+  setInterval(async () => {
+    try {
+      const deactivatedCount = await subscriptionService.deactivateExpiredSubscriptions();
+      if (deactivatedCount > 0) {
+        logger.info(`Deactivated ${deactivatedCount} expired subscriptions`);
+      }
+    } catch (error) {
+      logger.error('Subscription monitoring error:', error);
+    }
+  }, 60 * 60 * 1000); // Every hour
+  
+  logger.info('Subscription monitoring service initialized successfully');
+} catch (error) {
+  logger.error('Subscription monitoring service initialization failed:', error);
 }
 
 // Routes with enhanced logging
