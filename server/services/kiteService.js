@@ -249,7 +249,7 @@ class KiteService {
       console.log('🔍 Getting positions for broker connection:', brokerConnectionId);
       const kc = await this.getKiteInstance(brokerConnectionId);
       const positions = await kc.getPositions();
-      logger.info('✅ Raw positions data from KiteConnect:', JSON.stringify(positions, null, 2));
+      logger.info('✅ Positions retrieved from KiteConnect');
       
       // Return both net and day positions for flexibility
       const result = {

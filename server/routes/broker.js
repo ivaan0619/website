@@ -112,15 +112,33 @@ router.get('/positions/:connectionId', authenticateToken, async (req, res) => {
           positions = positionsData.net
             .filter(pos => Math.abs(pos.quantity) > 0) // Only non-zero positions
             .map(pos => ({
-              symbol: pos.tradingsymbol,
+              tradingsymbol: pos.tradingsymbol,
               exchange: pos.exchange,
-              quantity: pos.quantity,
-              average_price: pos.average_price,
-              current_price: pos.last_price,
-              pnl: pos.pnl,
-              pnl_percentage: pos.pnl ? (pos.pnl / (pos.average_price * Math.abs(pos.quantity))) * 100 : 0,
+              instrument_token: pos.instrument_token,
               product: pos.product,
-              last_updated: new Date().toISOString()
+              quantity: pos.quantity,
+              overnight_quantity: pos.overnight_quantity,
+              multiplier: pos.multiplier,
+              average_price: pos.average_price,
+              close_price: pos.close_price,
+              last_price: pos.last_price,
+              value: pos.value,
+              pnl: pos.pnl,
+              m2m: pos.m2m,
+              unrealised: pos.unrealised,
+              realised: pos.realised,
+              buy_quantity: pos.buy_quantity,
+              buy_price: pos.buy_price,
+              buy_value: pos.buy_value,
+              sell_quantity: pos.sell_quantity,
+              sell_price: pos.sell_price,
+              sell_value: pos.sell_value,
+              day_buy_quantity: pos.day_buy_quantity,
+              day_buy_price: pos.day_buy_price,
+              day_buy_value: pos.day_buy_value,
+              day_sell_quantity: pos.day_sell_quantity,
+              day_sell_price: pos.day_sell_price,
+              day_sell_value: pos.day_sell_value
             }));
         }
       } else {
@@ -207,15 +225,28 @@ router.get('/holdings/:connectionId', authenticateToken, async (req, res) => {
           holdings = holdingsData
             .filter(holding => holding.quantity > 0) // Only positive holdings
             .map(holding => ({
-              symbol: holding.tradingsymbol,
+              tradingsymbol: holding.tradingsymbol,
               exchange: holding.exchange,
+              instrument_token: holding.instrument_token,
+              isin: holding.isin,
+              product: holding.product,
+              price: holding.price,
               quantity: holding.quantity,
+              used_quantity: holding.used_quantity,
+              t1_quantity: holding.t1_quantity,
+              realised_quantity: holding.realised_quantity,
+              authorised_quantity: holding.authorised_quantity,
+              authorised_date: holding.authorised_date,
+              opening_quantity: holding.opening_quantity,
+              collateral_quantity: holding.collateral_quantity,
+              collateral_type: holding.collateral_type,
+              discrepancy: holding.discrepancy,
               average_price: holding.average_price,
-              current_price: holding.last_price,
+              last_price: holding.last_price,
+              close_price: holding.close_price,
               pnl: holding.pnl,
-              pnl_percentage: holding.pnl ? (holding.pnl / (holding.average_price * holding.quantity)) * 100 : 0,
-              product: 'CNC', // Holdings are typically CNC
-              last_updated: new Date().toISOString()
+              day_change: holding.day_change,
+              day_change_percentage: holding.day_change_percentage
             }));
         }
       } else {
