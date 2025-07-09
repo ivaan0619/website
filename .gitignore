@@ -23,4 +23,8 @@ dist-ssr
 *.sln
 *.sw?
 .env
+<<<<<<< HEAD
 autotrader.db
+=======
+autotrader.db
+>>>>>>> 5d5708451ba4e61beae808fa324583a312aa88cc
