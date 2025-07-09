@@ -1,5 +1,6 @@
 import { db } from '../database/init.js';
 import kiteService from './kiteService.js';
+import upstoxService from './upstoxService.js';
 import { createLogger } from '../utils/logger.js';
 
 const logger = createLogger('ORDER_STATUS_SERVICE');
@@ -81,6 +82,8 @@ class OrderStatusService {
       let brokerOrderData;
       if (brokerConnection.broker_name.toLowerCase() === 'zerodha') {
         brokerOrderData = await kiteService.getOrderStatus(brokerConnectionId, brokerOrderId);
+      } else if (brokerConnection.broker_name.toLowerCase() === 'upstox') {
+        brokerOrderData = await upstoxService.getOrderStatus(brokerConnectionId, brokerOrderId);
       } else {
         // For other brokers, implement their specific API calls
         logger.warn(`Order status polling not implemented for ${brokerConnection.broker_name}`);
@@ -109,7 +112,12 @@ class OrderStatusService {
           // If order is completed, sync positions
           if (newStatus === 'COMPLETE') {
             try {
-              await kiteService.syncPositions(brokerConnectionId);
+              if (brokerConnection.broker_name.toLowerCase() === 'zerodha') {
+                await kiteService.syncPositions(brokerConnectionId);
+              } else if (brokerConnection.broker_name.toLowerCase() === 'upstox') {
+                // Upstox position sync would be implemented here
+                // await upstoxService.syncPositions(brokerConnectionId);
+              }
               logger.info(`Positions synced after order ${orderId} completion`);
             } catch (syncError) {
               logger.error(`Failed to sync positions after order completion:`, syncError);
@@ -174,7 +182,6 @@ class OrderStatusService {
   // Calculate P&L for completed orders
   calculatePnL(order, updateData) {
     try {
-      logger.info(`Calculating P&L for order ${order.id}`, { order, updateData });
       const originalPrice = parseFloat(order.price) || 0;
       const executedPrice = parseFloat(updateData.executed_price) || 0;
       const quantity = parseInt(updateData.executed_quantity) || 0;
@@ -185,13 +192,11 @@ class OrderStatusService {
 
       let pnl = 0;
       if (order.transaction_type === 'BUY') {
-        // For buy orders, P&L is (current_price - buy_price) * quantity
-        // Since we only have executed price, we can't calculate unrealized P&L yet.
-        // For realized P&L, this would be (sell_price - buy_price) * quantity.
-        // We'll set P&L to 0 for now, assuming it's calculated elsewhere (e.g., positions).
-        pnl = (executedPrice - originalPrice) * quantity;
-      } else { // SELL
-        pnl = (originalPrice - executedPrice) * quantity;
+        // For buy orders, P&L is negative (cost)
+        pnl = -(executedPrice * quantity);
+      } else {
+        // For sell orders, P&L is positive (revenue)
+        pnl = executedPrice * quantity;
       }
 
       return parseFloat(pnl.toFixed(2));

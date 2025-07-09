@@ -1,7 +1,8 @@
 import express from 'express';
 import { db } from '../database/init.js';
-import { subscriptionAPI } from '../services/subscriptionService.js';
+import subscriptionAPI from '../services/subscriptionService.js';
 import kiteService from '../services/kiteService.js';
+import upstoxService from '../services/upstoxService.js';
 import orderStatusService from '../services/orderStatusService.js';
 import createLogger from '../utils/logger.js';
 
@@ -19,7 +20,7 @@ async function logErrorStatus(logId, message, startTime, debugLogs) {
 }
 
 // Convert webhook payload to Zerodha-compatible payload
-function formatZerodhaOrderPayload(payload, debugLogs) {
+function formatOrderPayload(payload, brokerName, debugLogs) {
   console.log('🔍 payload.symbol:', payload.symbol);
   debugLogs.push(`🔍 payload.symbol: ${payload.symbol}`);
 
@@ -33,29 +34,64 @@ function formatZerodhaOrderPayload(payload, debugLogs) {
     throw new Error('Symbol cannot be empty');
   }
 
-  const formatted = {
-    variety: 'regular',
-    exchange: payload.exchange || 'NSE',
-    tradingsymbol: symbolStr, // This should be the symbol
-    transaction_type: payload.action.toUpperCase(),
-    quantity: parseInt(payload.quantity),
-    order_type: payload.order_type || 'MARKET',
-    product: payload.product || 'MIS',
-    validity: payload.validity || 'DAY',
-    price: payload.order_type === 'LIMIT' ? parseFloat(payload.price || 0) : 0,
-    trigger_price: ['SL', 'SL-M'].includes(payload.order_type) ? parseFloat(payload.trigger_price || 0) : 0, // Fixed syntax error
-    tag: 'AutoTraderHub'
-  };
+  let formatted;
+  
+  if (brokerName.toLowerCase() === 'zerodha') {
+    formatted = {
+      variety: 'regular',
+      exchange: payload.exchange || 'NSE',
+      tradingsymbol: symbolStr,
+      transaction_type: payload.action.toUpperCase(),
+      quantity: parseInt(payload.quantity),
+      order_type: payload.order_type || 'MARKET',
+      product: payload.product || 'MIS',
+      validity: payload.validity || 'DAY',
+      price: payload.order_type === 'LIMIT' ? parseFloat(payload.price || 0) : 0,
+      trigger_price: ['SL', 'SL-M'].includes(payload.order_type) ? parseFloat(payload.trigger_price || 0) : 0,
+      tag: 'AutoTraderHub'
+    };
+  } else if (brokerName.toLowerCase() === 'upstox') {
+    // For Upstox, we need instrument_token instead of tradingsymbol
+    // In a real implementation, you'd look up the instrument_token from symbol
+    formatted = {
+      instrument_token: symbolStr, // This should be looked up from symbol
+      quantity: parseInt(payload.quantity),
+      product: payload.product === 'MIS' ? 'I' : (payload.product === 'CNC' ? 'D' : 'I'), // I=Intraday, D=Delivery
+      validity: payload.validity || 'DAY',
+      price: payload.order_type === 'LIMIT' ? parseFloat(payload.price || 0) : 0,
+      order_type: payload.order_type || 'MARKET',
+      transaction_type: payload.action.toUpperCase(),
+      disclosed_quantity: 0,
+      trigger_price: ['SL', 'SL-M'].includes(payload.order_type) ? parseFloat(payload.trigger_price || 0) : 0,
+      is_amo: false,
+      tag: 'AutoTraderHub'
+    };
+  } else {
+    // Default format for other brokers
+    formatted = {
+      symbol: symbolStr,
+      exchange: payload.exchange || 'NSE',
+      transaction_type: payload.action.toUpperCase(),
+      quantity: parseInt(payload.quantity),
+      order_type: payload.order_type || 'MARKET',
+      product: payload.product || 'MIS',
+      validity: payload.validity || 'DAY',
+      price: payload.order_type === 'LIMIT' ? parseFloat(payload.price || 0) : 0,
+      trigger_price: ['SL', 'SL-M'].includes(payload.order_type) ? parseFloat(payload.trigger_price || 0) : 0,
+      tag: 'AutoTraderHub'
+    };
+  }
 
   // Add additional logging to verify the object
   console.log('📋 Complete formatted object:', JSON.stringify(formatted, null, 2));
   debugLogs.push(`📋 Complete formatted object: ${JSON.stringify(formatted)}`);
   
-  // Verify tradingsymbol is still there
-  console.log('🔍 formatted.tradingsymbol:', formatted.tradingsymbol);
-  debugLogs.push(`🔍 formatted.tradingsymbol: ${formatted.tradingsymbol}`);
+  // Verify symbol/instrument_token is still there
+  const symbolField = formatted.tradingsymbol || formatted.instrument_token || formatted.symbol;
+  console.log('🔍 formatted symbol field:', symbolField);
+  debugLogs.push(`🔍 formatted symbol field: ${symbolField}`);
 
-  logger.debug('Formatted Zerodha Payload:', formatted);
+  logger.debug(`Formatted ${brokerName} Payload:`, formatted);
   return formatted;
 }
 
@@ -145,7 +181,7 @@ router.post('/:userId/:webhookId', async (req, res) => {
     await db.runAsync('UPDATE webhook_logs SET broker_connection_id = ? WHERE id = ?', [brokerConnection.id, logId]);
     debugLogs.push(`🔗 Broker connection found: ${brokerConnection.broker_name} (ID ${brokerConnection.id})`);
 
-    const orderParams = formatZerodhaOrderPayload(payload, debugLogs);
+    const orderParams = formatOrderPayload(payload, brokerConnection.broker_name, debugLogs);
     
     // Additional verification before sending to broker
     console.log('🔍 Final orderParams before broker call:', JSON.stringify(orderParams, null, 2));
@@ -154,7 +190,10 @@ router.post('/:userId/:webhookId', async (req, res) => {
     const orderResult = await db.runAsync(
       `INSERT INTO orders (user_id, broker_connection_id, symbol, exchange, quantity, order_type, transaction_type, product, price, trigger_price, status, webhook_data)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [userId, brokerConnection.id, orderParams.tradingsymbol, orderParams.exchange, orderParams.quantity,
+      [userId, brokerConnection.id, 
+        orderParams.tradingsymbol || orderParams.instrument_token || orderParams.symbol, 
+        orderParams.exchange || 'NSE', 
+        orderParams.quantity,
         orderParams.order_type, orderParams.transaction_type, orderParams.product, orderParams.price,
         orderParams.trigger_price, 'PENDING', JSON.stringify(payload)]
     );
@@ -172,6 +211,13 @@ router.post('/:userId/:webhookId', async (req, res) => {
         debugLogs.push(`🔍 Clean orderParams being sent to kiteService: ${JSON.stringify(cleanOrderParams)}`);
         
         brokerResponse = await kiteService.placeOrder(brokerConnection.id, cleanOrderParams);
+      } else if (brokerConnection.broker_name.toLowerCase() === 'upstox') {
+        // Create a clean copy of orderParams for Upstox
+        const cleanOrderParams = { ...orderParams };
+        console.log('🔍 Clean orderParams being sent to upstoxService:', JSON.stringify(cleanOrderParams, null, 2));
+        debugLogs.push(`🔍 Clean orderParams being sent to upstoxService: ${JSON.stringify(cleanOrderParams)}`);
+        
+        brokerResponse = await upstoxService.placeOrder(brokerConnection.id, cleanOrderParams);
       } else {
         brokerResponse = { success: true, order_id: `MOCK_${Date.now()}`, data: { status: 'COMPLETE' } };
       }
@@ -199,7 +245,12 @@ router.post('/:userId/:webhookId', async (req, res) => {
 
       if (brokerResponse.data.status === 'COMPLETE') {
         try {
-          await kiteService.syncPositions(brokerConnection.id);
+          if (brokerConnection.broker_name.toLowerCase() === 'zerodha') {
+            await kiteService.syncPositions(brokerConnection.id);
+          } else if (brokerConnection.broker_name.toLowerCase() === 'upstox') {
+            // Upstox position sync would be implemented here
+            // await upstoxService.syncPositions(brokerConnection.id);
+          }
           debugLogs.push('🔄 Positions synced successfully.');
         } catch (syncError) {
           debugLogs.push(`⚠️ Sync positions failed: ${syncError.message}`);

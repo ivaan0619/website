@@ -10,7 +10,6 @@ import {
 import { brokerAPI } from '../../services/api';
 import toast from 'react-hot-toast';
 
-
 interface BrokerConnectionForm {
   brokerName: string;
   apiKey: string;
@@ -50,7 +49,6 @@ const BrokerConnection: React.FC = () => {
   const [showEditForm, setShowEditForm] = useState(false);
   const [deletingConnection, setDeletingConnection] = useState<number | null>(null);
   
-  
   const { register, handleSubmit, watch, reset, setValue, formState: { errors } } = useForm<BrokerConnectionForm>();
   const selectedBroker = watch('brokerName');
 
@@ -69,7 +67,7 @@ const BrokerConnection: React.FC = () => {
       logo: '⚡', 
       description: 'Next-generation trading platform with lightning-fast execution',
       features: ['Mobile trading', 'Advanced charts', 'Margin trading'],
-      authRequired: false
+      authRequired: true
     },
     { 
       id: '5paisa', 
@@ -101,7 +99,6 @@ const BrokerConnection: React.FC = () => {
   const onSubmit = async (data: BrokerConnectionForm) => {
     setIsSubmitting(true);
     try {
-      console.log('Submitting broker connection:', data);
       const response = await brokerAPI.connect(data);
       
       if (response.data.requiresAuth && response.data.loginUrl) {
@@ -226,32 +223,24 @@ const BrokerConnection: React.FC = () => {
     }
   };
 
-  // NEW: Enhanced reconnect function using stored credentials
   const handleReconnectNow = async (connectionId: number) => {
     try {
       setReconnectingConnection(connectionId);
-      console.log('🔄 Reconnecting connection:', connectionId);
-      
       const response = await brokerAPI.reconnect(connectionId);
       
       if (response.data.loginUrl) {
-        // For OAuth brokers like Zerodha that require user login
-        console.log('🔐 Opening authentication window for reconnection');
-        handleZerodhaAuth(connectionId, response.data.loginUrl);
-        toast.success('Please complete authentication to reconnect your account.');
+        toast.success(`Please complete authentication to reconnect your ${response.data.brokerName} account.`);
       } else {
-        // For non-OAuth brokers (direct token refresh)
         toast.success('Reconnected successfully using stored credentials!');
-        fetchConnections(); // Refresh the connections list
+        fetchConnections();
         setReconnectingConnection(null);
       }
     } catch (error: any) {
       console.error('Reconnection failed:', error);
       
-      // More specific error handling
       if (error.response?.status === 404) {
         toast.error('Connection not found. Please add the broker again.');
-        fetchConnections(); // Refresh to update UI
+        fetchConnections();
       } else if (error.response?.status === 401) {
         toast.error('Session expired. Please re-authenticate.');
       } else if (error.response?.status === 400) {
@@ -276,11 +265,10 @@ const BrokerConnection: React.FC = () => {
     try {
       await brokerAPI.disconnect(connectionId);
       toast.success('Broker disconnected successfully!');
-      // Immediately update local state before refetching
       setConnections(prev => prev.map(conn => 
         conn.id === connectionId ? { ...conn, is_active: false } : conn
       ));
-      fetchConnections(); // Then refresh from server
+      fetchConnections();
     } catch (error: any) {
       toast.error(error.response?.data?.error || 'Failed to disconnect broker');
     }
@@ -301,11 +289,15 @@ const BrokerConnection: React.FC = () => {
     }
   };
 
-  const copyWebhookUrl = (webhookUrl: string, connectionId: number) => {
-    navigator.clipboard.writeText(webhookUrl);
-    setCopiedWebhook(connectionId);
-    toast.success('Webhook URL copied to clipboard!');
-    setTimeout(() => setCopiedWebhook(null), 2000);
+  const copyWebhookUrl = async (webhookUrl: string, connectionId: number) => {
+    try {
+      await navigator.clipboard.writeText(webhookUrl);
+      setCopiedWebhook(connectionId);
+      toast.success('Webhook URL copied to clipboard!');
+      setTimeout(() => setCopiedWebhook(null), 2000);
+    } catch (err) {
+      toast.error('Failed to copy webhook URL');
+    }
   };
 
   const syncPositions = async (connectionId: number) => {
@@ -627,6 +619,7 @@ const BrokerConnection: React.FC = () => {
           </div>
         </motion.div>
       )}
+
       {/* Available Brokers Grid */}
       <motion.div
         initial={{ opacity: 0, y: 20 }}
@@ -651,16 +644,15 @@ const BrokerConnection: React.FC = () => {
                 animate={{ opacity: 1, y: 0, rotateY: 0 }}
                 transition={{ duration: 0.6, delay: index * 0.2 }}
                 whileHover={{ 
-                  scale: 1.05,
                   rotateY: 5,
-                  rotateX: 5,
+                  scale: 1.02
                 }}
                 className="group p-6 rounded-2xl border-2 border-beige-200 bg-cream-50 hover:border-amber-300 transition-all duration-500 shadow-3d hover:shadow-3d-hover"
               >
                 <div className="text-center">
                   <motion.div 
                     className="text-5xl mb-4 group-hover:scale-110 transition-transform duration-300"
-                    whileHover={{ rotateY: 180 }}
+                    whileHover={{ rotate: 180 }}
                     transition={{ duration: 0.6 }}
                   >
                     {broker.logo}
@@ -722,9 +714,9 @@ const BrokerConnection: React.FC = () => {
               exit={{ scale: 0.9, opacity: 0 }}
               className="bg-white rounded-2xl p-6 max-w-md w-full border border-beige-200 shadow-3d"
             >
-              <h3 className="text-xl font-bold text-bronze-800 mb-4">Complete Zerodha Authentication</h3>
+              <h3 className="text-xl font-bold text-bronze-800 mb-4">Complete Broker Authentication</h3>
               <p className="text-bronze-600 mb-6">
-                Click the button below to open Zerodha login page. After logging in and authorizing the app, 
+                Click the button below to open the broker login page. After logging in and authorizing the app, 
                 the authentication will be completed automatically.
               </p>
               
@@ -736,7 +728,7 @@ const BrokerConnection: React.FC = () => {
                   className="w-full bg-gradient-to-r from-amber-500 to-bronze-600 text-white py-3 rounded-xl font-medium flex items-center justify-center space-x-2 shadow-3d"
                 >
                   <ExternalLink className="w-4 h-4" />
-                  <span>Open Zerodha Login</span>
+                  <span>Open Broker Login</span>
                 </motion.button>
 
                 <motion.button
@@ -803,7 +795,7 @@ const BrokerConnection: React.FC = () => {
                   >
                     <option value="">Choose a broker...</option>
                     {brokers.map(broker => (
- <option key={broker.id} value={broker.id}>
+                      <option key={broker.id} value={broker.id}>
                         {broker.name}
                       </option>
                     ))}
@@ -875,7 +867,7 @@ const BrokerConnection: React.FC = () => {
                         User ID
                       </label>
                       <input
-                        {...register('userId', { required: 'User  ID is required' })}
+                        {...register('userId', { required: 'User ID is required' })}
                         type="text"
                         className="w-full px-4 py-3 bg-cream-50 border border-beige-200 rounded-xl text-bronze-800 placeholder-bronze-400 focus:ring-2 focus:ring-amber-500 focus:border-transparent backdrop-blur-sm"
                         placeholder="Enter your user ID"
@@ -981,14 +973,11 @@ const BrokerConnection: React.FC = () => {
                     API Key
                   </label>
                   <input
-                    {...register('apiKey', { required: 'API Key is required' })}
+                    {...register('apiKey')}
                     type="text"
                     className="w-full px-4 py-3 bg-cream-50 border border-beige-200 rounded-xl text-bronze-800 placeholder-bronze-400 focus:ring-2 focus:ring-amber-500 focus:border-transparent backdrop-blur-sm"
                     placeholder="Enter new API key"
                   />
-                  {errors.apiKey && (
-                    <p className="mt-1 text-sm text-red-600">{errors.apiKey.message}</p>
-                  )}
                 </div>
 
                 <div>
@@ -997,7 +986,7 @@ const BrokerConnection: React.FC = () => {
                   </label>
                   <div className="relative">
                     <input
-                      {...register('apiSecret', { required: 'API Secret is required' })}
+                      {...register('apiSecret')}
                       type={showApiSecret ? 'text' : 'password'}
                       className="w-full px-4 py-3 pr-12 bg-cream-50 border border-beige-200 rounded-xl text-bronze-800 placeholder-bronze-400 focus:ring-2 focus:ring-amber-500 focus:border-transparent backdrop-blur-sm"
                       placeholder="Enter new API secret"
@@ -1010,9 +999,6 @@ const BrokerConnection: React.FC = () => {
                       {showApiSecret ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
                     </button>
                   </div>
-                  {errors.apiSecret && (
-                    <p className="mt-1 text-sm text-red-600">{errors.apiSecret.message}</p>
-                  )}
                 </div>
 
                 <div>
@@ -1020,7 +1006,7 @@ const BrokerConnection: React.FC = () => {
                     User ID
                   </label>
                   <input
-                    {...register('userId', { required: 'User  ID is required' })}
+                    {...register('userId', { required: 'User ID is required' })}
                     type="text"
                     className="w-full px-4 py-3 bg-cream-50 border border-beige-200 rounded-xl text-bronze-800 placeholder-bronze-400 focus:ring-2 focus:ring-amber-500 focus:border-transparent backdrop-blur-sm"
                     placeholder="Enter your user ID"
@@ -1039,7 +1025,7 @@ const BrokerConnection: React.FC = () => {
                     className="flex-1 bg-gradient-to-r from-amber-500 to-bronze-600 text-white py-3 rounded-xl font-medium hover:shadow-3d-hover transition-all flex items-center justify-center space-x-2 disabled:opacity-50 disabled:cursor-not-allowed shadow-3d"
                   >
                     <Settings className="w-4 h-4" />
-                    <span>{isSubmitting ? 'Updating...' : 'Update Settings'}</span>
+                    <span>{isSubmitting ? 'Updating...' : 'Update Connection'}</span>
                   </motion.button>
 
                   <motion.button

@@ -14,7 +14,7 @@ const Brokers: React.FC = () => {
       name: 'Upstox',
       logo: '⚡',
       description: 'Next-generation trading platform with lightning-fast execution',
-      features: ['Mobile trading', 'Advanced charts', 'Margin trading']
+      features: ['Real-time execution', 'Advanced API', 'Multi-asset trading']
     },
     {
       name: '5Paisa',
