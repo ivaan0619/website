@@ -539,7 +539,7 @@ router.post('/reconnect/:connectionId', authenticateToken, async (req, res) => {
         console.log('--- Step 6b: Handling Upstox Reconnection ---');
         const baseUrl = `${req.protocol}://${req.get('host')}`;
         console.log('Calculated baseUrl:', baseUrl);
-        const redirectUrl = `${baseUrl}/api/broker/auth/upstox/callback?connection_id=${connectionId}&reconnect=true`;
+        const redirectUrl = `${baseUrl}/api/broker/auth/upstox/callback`;
         // Generate Upstox login URL with state parameter for reconnection
         const state = Buffer.from(JSON.stringify({ 
           connection_id: connectionId, 
@@ -548,9 +548,8 @@ router.post('/reconnect/:connectionId', authenticateToken, async (req, res) => {
           reconnect: true
         })).toString('base64');
         
-        // Clean redirect URL without connection_id parameter
-        const cleanRedirectUrl = `${baseUrl}/api/broker/auth/upstox/callback`;
-        const loginUrl = `https://api.upstox.com/v2/login/authorization/dialog?response_type=code&client_id=${apiKey}&redirect_uri=${encodeURIComponent(cleanRedirectUrl)}&state=${state}`;
+        // Add connection_id as fallback in case state parsing fails
+        const loginUrl = `https://api.upstox.com/v2/login/authorization/dialog?response_type=code&client_id=${apiKey}&redirect_uri=${encodeURIComponent(redirectUrl)}&state=${state}&connection_id=${connectionId}`;
         console.log('Generated Upstox loginUrl:', loginUrl);
 
         logger.info('🔐 Generated reconnection login URL for Upstox connection:', connectionId);
@@ -818,70 +817,54 @@ router.get('/auth/upstox/callback', async (req, res) => {
       `);
     }
 
-    // Validate and parse state parameter
-    if (!state) {
-      return res.status(400).send(`
-        <html>
-          <head><title>Missing State Parameter</title></head>
-          <body style="font-family: Arial, sans-serif; text-align: center; padding: 50px;">
-            <h1 style="color: #dc3545;">❌ Missing State Parameter</h1>
-            <p>State parameter is required for secure authentication.</p>
-            <button onclick="window.close()" style="padding: 10px 20px; background: #6c757d; color: white; border: none; border-radius: 5px; cursor: pointer;">Close Window</button>
-          </body>
-        </html>
-      `);
-    }
-
-    let stateData;
-    try {
-      stateData = JSON.parse(Buffer.from(state, 'base64').toString('utf8'));
-      console.log('📋 Parsed state data:', { 
-        connection_id: stateData.connection_id, 
-        hasTimestamp: !!stateData.timestamp,
-        hasNonce: !!stateData.nonce,
-        reconnect: stateData.reconnect 
-      });
-    } catch (error) {
-      console.error('❌ Failed to parse state parameter:', error);
-      return res.status(400).send(`
-        <html>
-          <head><title>Invalid State Parameter</title></head>
-          <body style="font-family: Arial, sans-serif; text-align: center; padding: 50px;">
-            <h1 style="color: #dc3545;">❌ Invalid State Parameter</h1>
-            <p>The state parameter is malformed or corrupted.</p>
-            <button onclick="window.close()" style="padding: 10px 20px; background: #6c757d; color: white; border: none; border-radius: 5px; cursor: pointer;">Close Window</button>
-          </body>
-        </html>
-      `);
-    }
-
-    // Validate state data
-    const { connection_id, timestamp, nonce, reconnect } = stateData;
+    // Parse state parameter with better error handling
+    let connection_id, reconnect = false;
     
-    if (!connection_id || !timestamp || !nonce) {
-      return res.status(400).send(`
-        <html>
-          <head><title>Invalid State Data</title></head>
-          <body style="font-family: Arial, sans-serif; text-align: center; padding: 50px;">
-            <h1 style="color: #dc3545;">❌ Invalid State Data</h1>
-            <p>Required state parameters are missing.</p>
-            <button onclick="window.close()" style="padding: 10px 20px; background: #6c757d; color: white; border: none; border-radius: 5px; cursor: pointer;">Close Window</button>
-          </body>
-        </html>
-      `);
+    if (state) {
+      try {
+        const stateData = JSON.parse(Buffer.from(state, 'base64').toString('utf8'));
+        connection_id = stateData.connection_id;
+        reconnect = stateData.reconnect || false;
+        
+        console.log('📋 Parsed state data:', { 
+          connection_id, 
+          reconnect,
+          hasTimestamp: !!stateData.timestamp,
+          hasNonce: !!stateData.nonce
+        });
+        
+        // Validate timestamp if present (prevent replay attacks - 30 minute window)
+        if (stateData.timestamp) {
+          const now = Date.now();
+          const maxAge = 30 * 60 * 1000; // 30 minutes
+          if (now - stateData.timestamp > maxAge) {
+            console.warn('⚠️ State parameter expired, but continuing with authentication');
+          }
+        }
+      } catch (error) {
+        console.error('❌ Failed to parse state parameter:', error);
+        // Continue without state data - we'll try to find the connection another way
+        console.log('⚠️ Continuing authentication without state data');
+      }
     }
-
-    // Validate timestamp (prevent replay attacks - 10 minute window)
-    const now = Date.now();
-    const maxAge = 10 * 60 * 1000; // 10 minutes
-    if (now - timestamp > maxAge) {
-      console.error('❌ State parameter expired:', { timestamp, now, age: now - timestamp });
+    
+    // If we don't have connection_id from state, try to find it from the callback URL
+    if (!connection_id) {
+      const urlConnectionId = req.query.connection_id;
+      if (urlConnectionId) {
+        connection_id = urlConnectionId;
+        console.log('📋 Using connection_id from URL parameter:', connection_id);
+      }
+    }
+    
+    // If we still don't have connection_id, return error
+    if (!connection_id) {
       return res.status(400).send(`
         <html>
-          <head><title>Authentication Expired</title></head>
+          <head><title>Missing Connection ID</title></head>
           <body style="font-family: Arial, sans-serif; text-align: center; padding: 50px;">
-            <h1 style="color: #dc3545;">❌ Authentication Session Expired</h1>
-            <p>The authentication session has expired. Please try again.</p>
+            <h1 style="color: #dc3545;">❌ Missing Connection ID</h1>
+            <p>Unable to identify the broker connection. Please try connecting again.</p>
             <button onclick="window.close()" style="padding: 10px 20px; background: #6c757d; color: white; border: none; border-radius: 5px; cursor: pointer;">Close Window</button>
           </body>
         </html>

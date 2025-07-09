@@ -17,26 +17,55 @@ class UpstoxService {
       logger.info('Generating Upstox access token');
       
       const tokenUrl = `${this.baseURL}/login/authorization/token`;
-      const data = {
+      
+      // Prepare form data for token request
+      const formData = new URLSearchParams({
         code: authorizationCode,
         client_id: apiKey,
         client_secret: apiSecret,
         redirect_uri: redirectUri,
         grant_type: 'authorization_code'
-      };
+      });
 
-      const response = await axios.post(tokenUrl, data, {
+      console.log('🔐 Token request data:', {
+        url: tokenUrl,
+        client_id: apiKey,
+        redirect_uri: redirectUri,
+        grant_type: 'authorization_code',
+        hasCode: !!authorizationCode,
+        hasSecret: !!apiSecret
+      });
+
+      const response = await axios.post(tokenUrl, formData.toString(), {
         headers: {
           'Content-Type': 'application/x-www-form-urlencoded',
-          'Accept': 'application/json'
-        }
+          'Accept': 'application/json',
+          'User-Agent': 'AutoTraderHub/1.0'
+        },
+        timeout: 30000 // 30 second timeout
       });
+
+      console.log('✅ Upstox token response status:', response.status);
+      console.log('✅ Upstox token response data:', response.data);
 
       logger.info('Upstox access token generated successfully');
       return response.data;
     } catch (error) {
+      console.error('❌ Upstox token generation failed:', {
+        status: error.response?.status,
+        statusText: error.response?.statusText,
+        data: error.response?.data,
+        message: error.message
+      });
+      
       logger.error('Failed to generate Upstox access token:', error);
-      throw new Error(`Failed to generate access token: ${error.response?.data?.message || error.message}`);
+      
+      const errorMessage = error.response?.data?.message || 
+                          error.response?.data?.error || 
+                          error.response?.data?.error_description ||
+                          error.message;
+      
+      throw new Error(`Failed to generate access token: ${errorMessage}`);
     }
   }
 
