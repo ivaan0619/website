@@ -1,5 +1,6 @@
 import express from 'express';
 import { v4 as uuidv4 } from 'uuid';
+import crypto from 'crypto';
 import { db } from '../database/init.js';
 import { authenticateToken } from '../middleware/auth.js';
 import { encryptData, decryptData, testEncryption } from '../utils/encryption.js';
@@ -417,8 +418,16 @@ router.post('/connect', authenticateToken, async (req, res) => {
       try {
         const redirectUrl = `${baseUrl}/api/broker/auth/upstox/callback?connection_id=${connectionId}`;
         
-        // Generate Upstox login URL
-        const loginUrl = `https://api.upstox.com/v2/login/authorization/dialog?response_type=code&client_id=${apiKey}&redirect_uri=${encodeURIComponent(redirectUrl)}`;
+        // Generate Upstox login URL with state parameter (OAuth 2.0 standard)
+        const state = Buffer.from(JSON.stringify({ 
+          connection_id: connectionId, 
+          timestamp: Date.now(),
+          nonce: crypto.randomUUID() // prevent replay attacks
+        })).toString('base64');
+        
+        // Clean redirect URL without connection_id parameter
+        const cleanRedirectUrl = `${baseUrl}/api/broker/auth/upstox/callback`;
+        const loginUrl = `https://api.upstox.com/v2/login/authorization/dialog?response_type=code&client_id=${apiKey}&redirect_uri=${encodeURIComponent(cleanRedirectUrl)}&state=${state}`;
         
         console.log('🔐 Generated Upstox login URL for connection:', connectionId);
         
@@ -428,7 +437,7 @@ router.post('/connect', authenticateToken, async (req, res) => {
           loginUrl,
           webhookUrl,
           requiresAuth: true,
-          redirectUrl,
+          redirectUrl: cleanRedirectUrl,
           connectionName: finalConnectionName
         });
       } catch (error) {
@@ -531,8 +540,17 @@ router.post('/reconnect/:connectionId', authenticateToken, async (req, res) => {
         const baseUrl = `${req.protocol}://${req.get('host')}`;
         console.log('Calculated baseUrl:', baseUrl);
         const redirectUrl = `${baseUrl}/api/broker/auth/upstox/callback?connection_id=${connectionId}&reconnect=true`;
-        console.log('Calculated redirectUrl:', redirectUrl);
-        const loginUrl = `https://api.upstox.com/v2/login/authorization/dialog?response_type=code&client_id=${apiKey}&redirect_uri=${encodeURIComponent(redirectUrl)}`;
+        // Generate Upstox login URL with state parameter for reconnection
+        const state = Buffer.from(JSON.stringify({ 
+          connection_id: connectionId, 
+          timestamp: Date.now(),
+          nonce: crypto.randomUUID(),
+          reconnect: true
+        })).toString('base64');
+        
+        // Clean redirect URL without connection_id parameter
+        const cleanRedirectUrl = `${baseUrl}/api/broker/auth/upstox/callback`;
+        const loginUrl = `https://api.upstox.com/v2/login/authorization/dialog?response_type=code&client_id=${apiKey}&redirect_uri=${encodeURIComponent(cleanRedirectUrl)}&state=${state}`;
         console.log('Generated Upstox loginUrl:', loginUrl);
 
         logger.info('🔐 Generated reconnection login URL for Upstox connection:', connectionId);
@@ -781,9 +799,9 @@ router.get('/auth/zerodha/callback', async (req, res) => {
 // Upstox OAuth callback handler
 router.get('/auth/upstox/callback', async (req, res) => {
   try {
-    const { code, state, connection_id, reconnect } = req.query;
+    const { code, state } = req.query;
 
-    console.log('📡 Upstox callback received:', { code, state, connection_id, reconnect });
+    console.log('📡 Upstox callback received:', { code: !!code, state: !!state });
 
     // Check if authentication was successful
     if (!code) {
@@ -800,13 +818,70 @@ router.get('/auth/upstox/callback', async (req, res) => {
       `);
     }
 
-    if (!connection_id) {
+    // Validate and parse state parameter
+    if (!state) {
       return res.status(400).send(`
         <html>
-          <head><title>Missing Connection ID</title></head>
+          <head><title>Missing State Parameter</title></head>
           <body style="font-family: Arial, sans-serif; text-align: center; padding: 50px;">
-            <h1 style="color: #dc3545;">❌ Missing Connection ID</h1>
-            <p>Connection ID is required for authentication.</p>
+            <h1 style="color: #dc3545;">❌ Missing State Parameter</h1>
+            <p>State parameter is required for secure authentication.</p>
+            <button onclick="window.close()" style="padding: 10px 20px; background: #6c757d; color: white; border: none; border-radius: 5px; cursor: pointer;">Close Window</button>
+          </body>
+        </html>
+      `);
+    }
+
+    let stateData;
+    try {
+      stateData = JSON.parse(Buffer.from(state, 'base64').toString('utf8'));
+      console.log('📋 Parsed state data:', { 
+        connection_id: stateData.connection_id, 
+        hasTimestamp: !!stateData.timestamp,
+        hasNonce: !!stateData.nonce,
+        reconnect: stateData.reconnect 
+      });
+    } catch (error) {
+      console.error('❌ Failed to parse state parameter:', error);
+      return res.status(400).send(`
+        <html>
+          <head><title>Invalid State Parameter</title></head>
+          <body style="font-family: Arial, sans-serif; text-align: center; padding: 50px;">
+            <h1 style="color: #dc3545;">❌ Invalid State Parameter</h1>
+            <p>The state parameter is malformed or corrupted.</p>
+            <button onclick="window.close()" style="padding: 10px 20px; background: #6c757d; color: white; border: none; border-radius: 5px; cursor: pointer;">Close Window</button>
+          </body>
+        </html>
+      `);
+    }
+
+    // Validate state data
+    const { connection_id, timestamp, nonce, reconnect } = stateData;
+    
+    if (!connection_id || !timestamp || !nonce) {
+      return res.status(400).send(`
+        <html>
+          <head><title>Invalid State Data</title></head>
+          <body style="font-family: Arial, sans-serif; text-align: center; padding: 50px;">
+            <h1 style="color: #dc3545;">❌ Invalid State Data</h1>
+            <p>Required state parameters are missing.</p>
+            <button onclick="window.close()" style="padding: 10px 20px; background: #6c757d; color: white; border: none; border-radius: 5px; cursor: pointer;">Close Window</button>
+          </body>
+        </html>
+      `);
+    }
+
+    // Validate timestamp (prevent replay attacks - 10 minute window)
+    const now = Date.now();
+    const maxAge = 10 * 60 * 1000; // 10 minutes
+    if (now - timestamp > maxAge) {
+      console.error('❌ State parameter expired:', { timestamp, now, age: now - timestamp });
+      return res.status(400).send(`
+        <html>
+          <head><title>Authentication Expired</title></head>
+          <body style="font-family: Arial, sans-serif; text-align: center; padding: 50px;">
+            <h1 style="color: #dc3545;">❌ Authentication Session Expired</h1>
+            <p>The authentication session has expired. Please try again.</p>
             <button onclick="window.close()" style="padding: 10px 20px; background: #6c757d; color: white; border: none; border-radius: 5px; cursor: pointer;">Close Window</button>
           </body>
         </html>
@@ -836,7 +911,7 @@ router.get('/auth/upstox/callback', async (req, res) => {
       // Decrypt credentials
       const apiKey = decryptData(connection.api_key);
       const apiSecret = decryptData(connection.api_secret);
-      const redirectUrl = `${req.protocol}://${req.get('host')}/api/broker/auth/upstox/callback?connection_id=${connection_id}`;
+      const redirectUrl = `${req.protocol}://${req.get('host')}/api/broker/auth/upstox/callback`;
       
       console.log('🔐 Generating access token for Upstox connection:', connection_id);
       
