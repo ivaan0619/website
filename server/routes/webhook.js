@@ -1,6 +1,6 @@
 import express from 'express';
 import { db } from '../database/init.js';
-import { subscriptionAPI } from '../services/subscriptionService.js';
+import subscriptionService from '../services/subscriptionService.js';
 import kiteService from '../services/kiteService.js';
 import upstoxService from '../services/upstoxService.js';
 import angelService from '../services/angelService.js';
