@@ -17,10 +17,16 @@ const Brokers: React.FC = () => {
       features: ['Real-time execution', 'Advanced API', 'Multi-asset trading']
     },
     {
+      name: 'Angel Broking',
+      logo: '👼',
+      description: 'Smart API with comprehensive trading solutions',
+      features: ['Smart API', 'Real-time data', 'Multi-segment trading']
+    },
+    {
       name: 'Shoonya',
       logo: '🚀',
-      description: 'Zero brokerage trading platform with comprehensive API support',
-      features: ['Zero brokerage', 'Advanced API', 'Multi-segment trading']
+      description: 'Advanced trading platform with low-cost brokerage',
+      features: ['Low brokerage', 'Advanced API', 'Multi-asset trading']
     },
     {
       name: '5Paisa',
