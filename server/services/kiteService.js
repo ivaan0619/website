@@ -13,20 +13,32 @@ class KiteService {
   // Generate access token from request token
   async generateAccessToken(apiKey, apiSecret, requestToken) {
     try {
-      console.log('🔑 Generating access token with:', { apiKey: apiKey.substring(0, 8) + '...', requestToken });
-      
-      const kc = new KiteConnect({
+      console.log('🔑 Generating Zerodha access token with:', {
+        apiKey: apiKey.slice(0, 8) + '...',
+        requestToken
+      });
+
+      const kite = new KiteConnect({
         api_key: apiKey,
         debug: process.env.NODE_ENV === 'development'
       });
 
-      const response = await kc.generateSession(requestToken, apiSecret);
-      console.log('✅ Access token generated successfully');
-      
-      return response;
+      const session = await kite.generateSession(requestToken, apiSecret);
+
+      console.log('✅ Zerodha access token generated successfully:', {
+        access_token: session?.access_token?.slice(0, 8) + '...',
+        user_id: session?.user_id
+      });
+
+      return session;
     } catch (error) {
-      console.error('❌ Failed to generate access token:', error);
-      throw new Error(`Failed to generate access token: ${error.message}`);
+      console.error('❌ Zerodha token exchange failed:', {
+        message: error?.message,
+        status: error?.status,
+        data: error?.data || null
+      });
+
+      throw new Error(`Failed to generate access token: ${error?.message || 'Unknown error'}`);
     }
   }
 
