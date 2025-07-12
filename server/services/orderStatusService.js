@@ -84,6 +84,8 @@ class OrderStatusService {
         brokerOrderData = await kiteService.getOrderStatus(brokerConnectionId, brokerOrderId);
       } else if (brokerConnection.broker_name.toLowerCase() === 'upstox') {
         brokerOrderData = await upstoxService.getOrderStatus(brokerConnectionId, brokerOrderId);
+      } else if (brokerConnection.broker_name.toLowerCase() === 'shoonya') {
+        brokerOrderData = await shoonyaService.getOrderStatus(brokerConnectionId, brokerOrderId);
       } else {
         // For other brokers, implement their specific API calls
         logger.warn(`Order status polling not implemented for ${brokerConnection.broker_name}`);

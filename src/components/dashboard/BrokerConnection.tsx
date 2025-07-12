@@ -16,6 +16,11 @@ interface BrokerConnectionForm {
   apiSecret: string;
   userId: string;
   connectionName: string;
+  password?: string;
+  twoFA?: string;
+  vendor?: string;
+  appKey?: string;
+  imei?: string;
 }
 
 interface BrokerConnection {

@@ -336,7 +336,7 @@ router.get('/holdings/:connectionId', authenticateToken, async (req, res) => {
 // Connect broker - Step 1: Store credentials and generate login URL
 router.post('/connect', authenticateToken, async (req, res) => {
   try {
-    const { brokerName, apiKey, apiSecret, userId, connectionName, password, twoFA, vendor, appKey, imei } = req.body;
+    const { brokerName, apiKey, apiSecret, userId, connectionName } = req.body;
 
     console.log('📡 Broker connection request:', { brokerName, userId, connectionName, hasApiKey: !!apiKey, hasApiSecret: !!apiSecret });
 
@@ -344,14 +344,6 @@ router.post('/connect', authenticateToken, async (req, res) => {
       return res.status(400).json({ error: 'Broker name, API key, and API secret are required' });
     }
 
-    // Additional validation for Shoonya
-    if (brokerName.toLowerCase() === 'shoonya') {
-      if (!password || !twoFA || !vendor || !appKey || !imei) {
-        return res.status(400).json({ 
-          error: 'For Shoonya, password, 2FA/PIN, vendor code, app key, and IMEI are required' 
-        });
-      }
-    }
     // Check connection limit (max 5 per user)
     const existingConnections = await db.allAsync(
       'SELECT COUNT(*) as count FROM broker_connections WHERE user_id = ? AND is_active = 1',
@@ -384,31 +376,13 @@ router.post('/connect', authenticateToken, async (req, res) => {
 
       const encryptedApiKey = encryptData(apiKey);
       const encryptedApiSecret = encryptData(apiSecret);
-      
-      // Encrypt additional Shoonya fields if provided
-      const encryptedPassword = password ? encryptData(password) : null;
-      const encryptedTwoFA = twoFA ? encryptData(twoFA) : null;
-      const encryptedAppKey = appKey ? encryptData(appKey) : null;
 
       // Create new connection
       const result = await db.runAsync(`
         INSERT INTO broker_connections 
-        (user_id, broker_name, connection_name, api_key, api_secret, user_id_broker, password, two_fa, vendor, app_key, imei, webhook_url) 
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `, [
-        req.user.id, 
-        brokerName.toLowerCase(), 
-        finalConnectionName, 
-        encryptedApiKey, 
-        encryptedApiSecret, 
-        userId, 
-        encryptedPassword,
-        encryptedTwoFA,
-        vendor,
-        encryptedAppKey,
-        imei,
-        webhookUrl
-      ]);
+        (user_id, broker_name, connection_name, api_key, api_secret, user_id_broker, webhook_url) 
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+      `, [req.user.id, brokerName.toLowerCase(), finalConnectionName, encryptedApiKey, encryptedApiSecret, userId, webhookUrl]);
       
       connectionId = result.lastID;
       console.log('✅ Created new broker connection:', connectionId);
@@ -469,45 +443,6 @@ router.post('/connect', authenticateToken, async (req, res) => {
       } catch (error) {
         console.error('❌ Failed to generate Upstox login URL:', error);
         res.status(400).json({ error: 'Invalid API key or failed to generate login URL' });
-      }
-    } else if (brokerName.toLowerCase() === 'shoonya') {
-      try {
-        // For Shoonya, we can directly authenticate using the provided credentials
-        console.log('🔐 Attempting Shoonya authentication for connection:', connectionId);
-        
-        const sessionResponse = await shoonyaService.generateSessionToken(
-          apiKey, 
-          apiSecret, 
-          userId, 
-          password, 
-          twoFA, 
-          vendor, 
-          appKey, 
-          imei
-        );
-        
-        // Store the session token
-        const expiresAt = Math.floor(Date.now() / 1000) + (24 * 60 * 60); // 24 hours
-        
-        await db.runAsync(`
-          UPDATE broker_connections 
-          SET access_token = ?, access_token_expires_at = ?, is_active = 1, is_authenticated = 1, updated_at = CURRENT_TIMESTAMP 
-          WHERE id = ?
-        `, [encryptData(sessionResponse.access_token), expiresAt, connectionId]);
-        
-        console.log('✅ Shoonya authentication completed for connection:', connectionId);
-        
-        res.json({ 
-          message: 'Shoonya broker connected successfully!',
-          connectionId,
-          webhookUrl,
-          requiresAuth: false,
-          connectionName: finalConnectionName,
-          profile: sessionResponse
-        });
-      } catch (error) {
-        console.error('❌ Shoonya authentication failed:', error);
-        res.status(400).json({ error: `Shoonya authentication failed: ${error.message}` });
       }
     } else {
       // For other brokers, mark as connected (mock implementation)
@@ -1192,6 +1127,9 @@ router.post('/test/:connectionId', authenticateToken, async (req, res) => {
       } else if (connection.broker_name.toLowerCase() === 'upstox') {
         // Test connection using UpstoxService
         testResult = await upstoxService.getProfile(connectionId);
+      } else if (connection.broker_name.toLowerCase() === 'shoonya') {
+        // Test connection using ShoonyaService
+        testResult = await shoonyaService.getProfile(connectionId);
       } else {
         return res.status(400).json({ error: 'Unsupported broker' });
       }
