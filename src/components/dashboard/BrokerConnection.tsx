@@ -16,6 +16,11 @@ interface BrokerConnectionForm {
   apiSecret: string;
   userId: string;
   connectionName: string;
+  password?: string;
+  twoFA?: string;
+  vendor?: string;
+  appKey?: string;
+  imei?: string;
 }
 
 interface BrokerConnection {
@@ -67,6 +72,14 @@ const BrokerConnection: React.FC = () => {
       logo: '⚡', 
       description: 'Next-generation trading platform with lightning-fast execution',
       features: ['Mobile trading', 'Advanced charts', 'Margin trading'],
+      authRequired: true
+    },
+    { 
+      id: 'shoonya', 
+      name: 'Shoonya', 
+      logo: '💫', 
+      description: 'Low latency, high-frequency trading platform with minimal brokerage',
+      features: ['Ultra-low latency', 'High-frequency trading', 'Algo trading support'],
       authRequired: true
     },
     { 

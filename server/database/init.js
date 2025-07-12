@@ -2,8 +2,22 @@ import sqlite3 from 'sqlite3';
 import { promisify } from 'util';
 import { createLogger } from '../utils/logger.js';
 
-const db = new sqlite3.Database('./autotrader.db');
+const dbPath = process.env.DATABASE_PATH || './autotrader.db';
 const logger = createLogger('DATABASE');
+
+// Create database with proper permissions
+const db = new sqlite3.Database(dbPath, sqlite3.OPEN_READWRITE | sqlite3.OPEN_CREATE, (err) => {
+  if (err) {
+    logger.error('Database connection failed', err, {
+      path: dbPath,
+      fatal: true
+    });
+    process.exit(1);
+  }
+  logger.info('Database connected successfully', {
+    path: dbPath
+  });
+});
 
 // Custom Promise-based db.runAsync to return lastID and changes with logging
 db.runAsync = (sql, params = []) => {
@@ -175,25 +189,24 @@ export const initDatabase = async () => {
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         user_id INTEGER NOT NULL,
         broker_name TEXT NOT NULL,
-        connection_name TEXT, -- User-defined name for this connection
-        api_key TEXT NOT NULL,
-        api_secret TEXT NOT NULL,
+        connection_name TEXT NOT NULL,
+        api_key TEXT,
+        encrypted_api_secret TEXT,
+        encrypted_password TEXT,
+        encrypted_two_fa TEXT,
         user_id_broker TEXT,
-        password TEXT, -- For Shoonya login password (encrypted)
-        two_fa TEXT, -- For Shoonya 2FA/PIN (encrypted)
-        vendor TEXT, -- For Shoonya vendor code
-        app_key TEXT, -- For Shoonya app key (encrypted)
-        imei TEXT, -- For Shoonya IMEI
+        vendor TEXT,
+        app_key TEXT,
+        imei TEXT,
         access_token TEXT,
-        public_token TEXT,
-        access_token_expires_at INTEGER, -- Unix timestamp for token expiry
-        webhook_url TEXT,
+        refresh_token TEXT,
+        access_token_expires_at INTEGER,
         is_active BOOLEAN DEFAULT 1,
         is_authenticated BOOLEAN DEFAULT 0,
-        last_sync DATETIME,
+        webhook_url TEXT,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY (user_id) REFERENCES users (id)
+        last_sync DATETIME,
+        FOREIGN KEY (user_id) REFERENCES users(id)
       )
     `);
 

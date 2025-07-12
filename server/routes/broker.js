@@ -6,10 +6,10 @@ import { authenticateToken } from '../middleware/auth.js';
 import { encryptData, decryptData, testEncryption } from '../utils/encryption.js';
 import kiteService from '../services/kiteService.js';
 import upstoxService from '../services/upstoxService.js';
+import shoonyaService from '../services/shoonyaService.js';
 import createLogger from '../utils/logger.js';
 
 const logger = createLogger('BrokerHandler');
-
 const router = express.Router();
 
 // Test encryption on startup
@@ -1165,5 +1165,83 @@ router.post('/test/:connectionId', authenticateToken, async (req, res) => {
   }
 });
 
+// Validate Shoonya credentials
+router.post('/shoonya/validate', authenticateToken, async (req, res) => {
+  try {
+    const { apiKey, apiSecret, userId, password, twoFA, vendor, appKey, imei } = req.body;
+    const result = await shoonyaService.validateCredentials(
+      apiKey, apiSecret, userId, password, twoFA, vendor, appKey, imei
+    );
+    res.json(result);
+  } catch (error) {
+    logger.error('Shoonya validation error:', error);
+    res.status(400).json({ error: error.message });
+  }
+});
+
+// Get Shoonya connection login URL
+router.get('/shoonya/:connectionId/login-url', authenticateToken, async (req, res) => {
+  try {
+    const { connectionId } = req.params;
+    const connection = await db.get(
+      'SELECT * FROM broker_connections WHERE id = ? AND user_id = ?',
+      [connectionId, req.user.id]
+    );
+
+    if (!connection) {
+      return res.status(404).json({ error: 'Connection not found' });
+    }
+
+    const loginUrl = await shoonyaService.getLoginUrl(connectionId);
+    res.json({ loginUrl });
+  } catch (error) {
+    logger.error('Get Shoonya login URL error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Complete Shoonya authentication
+router.post('/shoonya/:connectionId/complete-auth', authenticateToken, async (req, res) => {
+  try {
+    const { connectionId } = req.params;
+    const { authCode } = req.body;
+
+    const connection = await db.get(
+      'SELECT * FROM broker_connections WHERE id = ? AND user_id = ?',
+      [connectionId, req.user.id]
+    );
+
+    if (!connection) {
+      return res.status(404).json({ error: 'Connection not found' });
+    }
+
+    const result = await shoonyaService.completeAuth(connectionId, authCode);
+    res.json(result);
+  } catch (error) {
+    logger.error('Complete Shoonya auth error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Refresh Shoonya token
+router.post('/shoonya/:connectionId/refresh-token', authenticateToken, async (req, res) => {
+  try {
+    const { connectionId } = req.params;
+    const connection = await db.get(
+      'SELECT * FROM broker_connections WHERE id = ? AND user_id = ?',
+      [connectionId, req.user.id]
+    );
+
+    if (!connection) {
+      return res.status(404).json({ error: 'Connection not found' });
+    }
+
+    const result = await shoonyaService.refreshToken(connectionId);
+    res.json(result);
+  } catch (error) {
+    logger.error('Refresh Shoonya token error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
 
 export default router;

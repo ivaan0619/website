@@ -2,6 +2,11 @@ import axios from 'axios';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001/api';
 
+console.log('🔧 API Configuration:', {
+  baseURL: API_BASE_URL,
+  environment: import.meta.env.MODE
+});
+
 // Create axios instance with better error handling
 const api = axios.create({
   baseURL: API_BASE_URL,
@@ -9,6 +14,7 @@ const api = axios.create({
     'Content-Type': 'application/json',
   },
   timeout: 30000, // 30 second timeout
+  withCredentials: true // Important for CORS
 });
 
 // Add auth token to requests
@@ -122,6 +128,12 @@ export const brokerAPI = {
       throw error;
     }
   },
+  
+  // Shoonya specific endpoints
+  validateShoonyaCredentials: (data) => api.post('/broker/shoonya/validate', data),
+  getShoonyaLoginUrl: (connectionId) => api.get(`/broker/shoonya/${connectionId}/login-url`),
+  completeShoonyaAuth: (connectionId, authCode) => api.post(`/broker/shoonya/${connectionId}/complete-auth`, { authCode }),
+  refreshShoonyaToken: (connectionId) => api.post(`/broker/shoonya/${connectionId}/refresh-token`),
 };
 
 // Enhanced Orders API - Updated for Node.js Express endpoints

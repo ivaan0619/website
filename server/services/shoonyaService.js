@@ -6,10 +6,19 @@ import { createLogger } from '../utils/logger.js';
 
 const logger = createLogger('ShoonyaService');
 
+const SHOONYA_CONFIG = {
+  endpoint: "https://api.shoonya.com/NorenWClientTP",    
+  websocket: "wss://api.shoonya.com/NorenWSTP/",
+  eodhost: "https://shoonya.finvasia.com/chartApi/getdata/",
+  debug: false,
+  timeout: 7000
+};
+
 class ShoonyaService {
   constructor() {
-    this.shoonyaInstances = new Map(); // Store Shoonya instances per connection
-    this.baseURL = 'https://api.shoonya.com/NorenWClientTP';
+    this.shoonyaInstances = new Map();
+    this.baseURL = SHOONYA_CONFIG.endpoint;
+    this.wsURL = SHOONYA_CONFIG.websocket;
   }
 
   // Generate session token using login credentials
@@ -17,10 +26,10 @@ class ShoonyaService {
     try {
       logger.info('Generating Shoonya session token');
       
-      // Create password hash
+      // Create password hash using SHA256
       const passwordHash = crypto.createHash('sha256').update(password).digest('hex');
       
-      // Create app key hash
+      // Create app key hash - userId|apiKey as per official docs
       const appKeyHash = crypto.createHash('sha256').update(`${userId}|${apiKey}`).digest('hex');
       
       const loginData = {
@@ -30,11 +39,11 @@ class ShoonyaService {
         factor2: twoFA,
         vc: vendor,
         appkey: appKeyHash,
-        imei: imei,
+        imei: imei || 'autotrader-web',
         source: 'API'
       };
 
-      console.log('🔐 Shoonya login request data:', {
+      logger.info('Attempting Shoonya login', { 
         uid: userId,
         vc: vendor,
         source: 'API',
@@ -47,39 +56,39 @@ class ShoonyaService {
           'Content-Type': 'application/json',
           'User-Agent': 'AutoTraderHub/1.0'
         },
-        timeout: 30000
+        timeout: SHOONYA_CONFIG.timeout
       });
-
-      console.log('✅ Shoonya login response status:', response.status);
-      console.log('✅ Shoonya login response data:', response.data);
 
       if (response.data.stat === 'Ok') {
         logger.info('Shoonya session token generated successfully');
+        const expiry = Date.now() + (24 * 60 * 60 * 1000); // Token valid for 24 hours
+
         return {
           access_token: response.data.susertoken,
           user_id: response.data.uid || userId,
           user_name: response.data.uname || userId,
           email: response.data.email || '',
-          broker: 'shoonya'
+          prarr: response.data.prarr || [], // Product array
+          actid: response.data.actid || '', // Account ID
+          broker: 'shoonya',
+          expires_at: expiry
         };
       } else {
         throw new Error(response.data.emsg || 'Login failed');
       }
     } catch (error) {
-      console.error('❌ Shoonya login failed:', {
+      logger.error('Shoonya login failed:', {
         status: error.response?.status,
         statusText: error.response?.statusText,
         data: error.response?.data,
         message: error.message
       });
       
-      logger.error('Failed to generate Shoonya session token:', error);
-      
       const errorMessage = error.response?.data?.emsg || 
                           error.response?.data?.error || 
                           error.message;
       
-      throw new Error(`Failed to generate session token: ${errorMessage}`);
+      throw new Error(`Authentication failed: ${errorMessage}`);
     }
   }
 
@@ -170,37 +179,7 @@ class ShoonyaService {
     }
   }
 
-  // Make authenticated request to Shoonya API
-  async makeRequest(shoonyaInstance, endpoint, data = {}) {
-    try {
-      const requestData = {
-        ...data,
-        uid: shoonyaInstance.userId,
-        actid: shoonyaInstance.userId
-      };
-
-      // Add session token for authenticated requests
-      if (shoonyaInstance.accessToken) {
-        requestData.susertoken = shoonyaInstance.accessToken;
-      }
-
-      const response = await axios.post(`${shoonyaInstance.baseURL}${endpoint}`, requestData, {
-        headers: shoonyaInstance.headers,
-        timeout: 30000
-      });
-
-      if (response.data.stat === 'Not_Ok') {
-        throw new Error(response.data.emsg || 'API request failed');
-      }
-
-      return response.data;
-    } catch (error) {
-      logger.error(`Shoonya API request failed for ${endpoint}:`, error);
-      throw error;
-    }
-  }
-
-  // Place order
+  // Place order with better parameter mapping
   async placeOrder(brokerConnectionId, orderParams) {
     try {
       logger.info(`Placing Shoonya order for connection ${brokerConnectionId}`);
@@ -208,15 +187,9 @@ class ShoonyaService {
       const shoonyaInstance = await this.getShoonyaInstance(brokerConnectionId);
       
       // Validate required parameters
-      if (!orderParams.tradingsymbol) {
-        throw new Error('tradingsymbol is required for Shoonya orders');
-      }
-      if (!orderParams.transaction_type) {
-        throw new Error('transaction_type is required');
-      }
-      if (!orderParams.quantity) {
-        throw new Error('quantity is required');
-      }
+      if (!orderParams.tradingsymbol) throw new Error('tradingsymbol is required');
+      if (!orderParams.transaction_type) throw new Error('transaction_type is required');
+      if (!orderParams.quantity) throw new Error('quantity is required');
 
       // Map order parameters to Shoonya format
       const shoonyaOrderData = {
@@ -224,19 +197,17 @@ class ShoonyaService {
         actid: shoonyaInstance.userId,
         exch: orderParams.exchange || 'NSE',
         tsym: orderParams.tradingsymbol,
-        qty: parseInt(orderParams.quantity).toString(),
-        prc: orderParams.order_type === 'LMT' ? parseFloat(orderParams.price || 0).toString() : '0',
+        qty: String(orderParams.quantity),
+        prc: orderParams.order_type === 'LMT' ? String(orderParams.price || 0) : '0',
         prd: this.mapProduct(orderParams.product || 'I'),
         trantype: orderParams.transaction_type === 'BUY' ? 'B' : 'S',
         prctyp: this.mapOrderType(orderParams.order_type || 'MKT'),
         ret: orderParams.validity || 'DAY',
+        dscqty: String(orderParams.disclosed_quantity || 0),
+        trgprc: orderParams.trigger_price ? String(orderParams.trigger_price) : undefined,
+        remarks: orderParams.tag || '',
         ordersource: 'API'
       };
-
-      // Add trigger price for stop loss orders
-      if (['SL-LMT', 'SL-MKT'].includes(orderParams.order_type)) {
-        shoonyaOrderData.trgprc = parseFloat(orderParams.trigger_price || 0).toString();
-      }
 
       logger.info('Placing order with Shoonya API:', shoonyaOrderData);
       
@@ -258,29 +229,115 @@ class ShoonyaService {
       throw new Error(`Order placement failed: ${error.message}`);
     }
   }
-
-  // Get user profile
-  async getProfile(brokerConnectionId) {
+  
+  // Make authenticated request to Shoonya API
+  async makeRequest(shoonyaInstance, endpoint, data = {}) {
     try {
-      logger.info(`Getting Shoonya profile for connection ${brokerConnectionId}`);
-      const shoonyaInstance = await this.getShoonyaInstance(brokerConnectionId);
-      
-      const response = await this.makeRequest(shoonyaInstance, '/UserDetails', {
+      const requestData = {
+        ...data,
         uid: shoonyaInstance.userId,
         actid: shoonyaInstance.userId
-      });
-      
-      logger.info('Shoonya profile retrieved successfully');
-      return {
-        user_name: response.uname || shoonyaInstance.userId,
-        user_id: response.uid || shoonyaInstance.userId,
-        email: response.email || '',
-        broker: 'shoonya',
-        account_id: response.actid || shoonyaInstance.userId
       };
+
+      if (shoonyaInstance.accessToken) {
+        requestData.susertoken = shoonyaInstance.accessToken;
+      }
+
+      const response = await axios.post(`${shoonyaInstance.baseURL}${endpoint}`, requestData, {
+        headers: {
+          ...shoonyaInstance.headers,
+          'Content-Type': 'application/json'
+        },
+        timeout: SHOONYA_CONFIG.timeout
+      });
+
+      if (response.data.stat === 'Not_Ok') {
+        throw new Error(response.data.emsg || 'API request failed');
+      }
+
+      return response.data;
     } catch (error) {
-      logger.error('Failed to get Shoonya profile:', error);
-      throw new Error(`Failed to get profile: ${error.message}`);
+      logger.error(`Shoonya API request failed for ${endpoint}:`, error);
+      throw error;
+    }
+  }
+
+  // Validate credentials without creating connection
+  async validateCredentials(apiKey, apiSecret, userId, password, twoFA, vendor, appKey, imei) {
+    try {
+      const sessionToken = await this.generateSessionToken(apiKey, apiSecret, userId, password, twoFA, vendor, appKey, imei);
+      return { valid: true, sessionToken };
+    } catch (error) {
+      logger.error('Failed to validate Shoonya credentials:', error);
+      return { valid: false, error: error.message };
+    }
+  }
+
+  // Get user profile information
+  async getUserProfile(connectionId) {
+    try {
+      const instance = this.shoonyaInstances.get(connectionId);
+      if (!instance) {
+        throw new Error('No active Shoonya instance found for this connection');
+      }
+
+      const response = await axios.get(`${this.baseURL}/UserProfile`, {
+        headers: {
+          'X-Access-Token': instance.sessionToken,
+          'Content-Type': 'application/json'
+        }
+      });
+
+      return response.data;
+    } catch (error) {
+      logger.error('Failed to get user profile:', error);
+      throw error;
+    }
+  }
+
+  // Refresh access token
+  async refreshToken(connectionId) {
+    try {
+      const connection = await db.get(
+        'SELECT api_key, encrypted_api_secret, user_id_broker, encrypted_password, encrypted_two_fa FROM broker_connections WHERE id = ?',
+        [connectionId]
+      );
+
+      if (!connection) {
+        throw new Error('Connection not found');
+      }
+
+      const apiSecret = await decryptData(connection.encrypted_api_secret);
+      const password = await decryptData(connection.encrypted_password);
+      const twoFA = await decryptData(connection.encrypted_two_fa);
+
+      const sessionToken = await this.generateSessionToken(
+        connection.api_key,
+        apiSecret,
+        connection.user_id_broker,
+        password,
+        twoFA,
+        'API_CLIENT',
+        '',
+        'AUTO_TRADER'
+      );
+
+      // Update the instance with new session token
+      this.shoonyaInstances.set(connectionId, {
+        ...this.shoonyaInstances.get(connectionId),
+        sessionToken
+      });
+
+      // Update token expiry in database
+      await db.run(
+        'UPDATE broker_connections SET access_token = ?, access_token_expires_at = ? WHERE id = ?',
+        [sessionToken, Date.now() + 24 * 60 * 60 * 1000, connectionId]
+      );
+
+      return { success: true, sessionToken };
+    } catch (error) {
+      logger.error('Failed to refresh Shoonya token:', error);
+      throw error;
     }
   }
 
@@ -413,18 +470,20 @@ class ShoonyaService {
     }
   }
 
-  // Helper methods for mapping between formats
+  // Updated product type mapping as per Shoonya docs
   mapProduct(product) {
     const productMap = {
       'I': 'I',     // Intraday
       'MIS': 'I',   // Intraday
       'CNC': 'C',   // Cash and Carry
-      'D': 'C',     // Delivery
-      'NRML': 'M'   // Normal/Margin
+      'NRML': 'M',  // Margin
+      'CO': 'H',    // Cover Order
+      'BO': 'B'     // Bracket Order
     };
     return productMap[product] || 'I';
   }
 
+  // Updated order type mapping as per Shoonya docs
   mapOrderType(orderType) {
     const orderTypeMap = {
       'MARKET': 'MKT',
