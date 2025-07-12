@@ -16,11 +16,6 @@ interface BrokerConnectionForm {
   apiSecret: string;
   userId: string;
   connectionName: string;
-  password?: string;
-  twoFA?: string;
-  vendor?: string;
-  appKey?: string;
-  imei?: string;
 }
 
 interface BrokerConnection {
@@ -881,6 +876,118 @@ const BrokerConnection: React.FC = () => {
                         <p className="mt-1 text-sm text-red-600">{errors.userId.message}</p>
                       )}
                     </div>
+
+                    {/* Shoonya-specific fields */}
+                    {selectedBroker === 'shoonya' && (
+                      <>
+                        <div>
+                          <label className="block text-sm font-medium text-bronze-700 mb-2">
+                            Password
+                          </label>
+                          <div className="relative">
+                            <input
+                              {...register('password', { 
+                                required: selectedBroker === 'shoonya' ? 'Password is required for Shoonya' : false 
+                              })}
+                              type={showApiSecret ? 'text' : 'password'}
+                              className="w-full px-4 py-3 pr-12 bg-cream-50 border border-beige-200 rounded-xl text-bronze-800 placeholder-bronze-400 focus:ring-2 focus:ring-amber-500 focus:border-transparent backdrop-blur-sm"
+                              placeholder="Enter your login password"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => setShowApiSecret(!showApiSecret)}
+                              className="absolute right-3 top-1/2 transform -translate-y-1/2 text-bronze-400 hover:text-bronze-600 transition-colors"
+                            >
+                              {showApiSecret ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+                            </button>
+                          </div>
+                          {errors.password && (
+                            <p className="mt-1 text-sm text-red-600">{errors.password.message}</p>
+                          )}
+                        </div>
+
+                        <div>
+                          <label className="block text-sm font-medium text-bronze-700 mb-2">
+                            2FA/PIN
+                          </label>
+                          <input
+                            {...register('twoFA', { 
+                              required: selectedBroker === 'shoonya' ? '2FA/PIN is required for Shoonya' : false 
+                            })}
+                            type="text"
+                            className="w-full px-4 py-3 bg-cream-50 border border-beige-200 rounded-xl text-bronze-800 placeholder-bronze-400 focus:ring-2 focus:ring-amber-500 focus:border-transparent backdrop-blur-sm"
+                            placeholder="Enter your 2FA/PIN"
+                          />
+                          {errors.twoFA && (
+                            <p className="mt-1 text-sm text-red-600">{errors.twoFA.message}</p>
+                          )}
+                        </div>
+
+                        <div>
+                          <label className="block text-sm font-medium text-bronze-700 mb-2">
+                            Vendor Code
+                          </label>
+                          <input
+                            {...register('vendor', { 
+                              required: selectedBroker === 'shoonya' ? 'Vendor code is required for Shoonya' : false 
+                            })}
+                            type="text"
+                            className="w-full px-4 py-3 bg-cream-50 border border-beige-200 rounded-xl text-bronze-800 placeholder-bronze-400 focus:ring-2 focus:ring-amber-500 focus:border-transparent backdrop-blur-sm"
+                            placeholder="Enter vendor code (e.g., SHOONYA_API)"
+                          />
+                          {errors.vendor && (
+                            <p className="mt-1 text-sm text-red-600">{errors.vendor.message}</p>
+                          )}
+                        </div>
+
+                        <div>
+                          <label className="block text-sm font-medium text-bronze-700 mb-2">
+                            App Key
+                          </label>
+                          <input
+                            {...register('appKey', { 
+                              required: selectedBroker === 'shoonya' ? 'App key is required for Shoonya' : false 
+                            })}
+                            type="text"
+                            className="w-full px-4 py-3 bg-cream-50 border border-beige-200 rounded-xl text-bronze-800 placeholder-bronze-400 focus:ring-2 focus:ring-amber-500 focus:border-transparent backdrop-blur-sm"
+                            placeholder="Enter your app key"
+                          />
+                          {errors.appKey && (
+                            <p className="mt-1 text-sm text-red-600">{errors.appKey.message}</p>
+                          )}
+                        </div>
+
+                        <div>
+                          <label className="block text-sm font-medium text-bronze-700 mb-2">
+                            IMEI
+                          </label>
+                          <input
+                            {...register('imei', { 
+                              required: selectedBroker === 'shoonya' ? 'IMEI is required for Shoonya' : false 
+                            })}
+                            type="text"
+                            className="w-full px-4 py-3 bg-cream-50 border border-beige-200 rounded-xl text-bronze-800 placeholder-bronze-400 focus:ring-2 focus:ring-amber-500 focus:border-transparent backdrop-blur-sm"
+                            placeholder="Enter device IMEI"
+                          />
+                          {errors.imei && (
+                            <p className="mt-1 text-sm text-red-600">{errors.imei.message}</p>
+                          )}
+                        </div>
+
+                        <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                          <div className="flex items-center space-x-2 mb-2">
+                            <AlertCircle className="w-4 h-4 text-blue-600" />
+                            <span className="text-blue-700 text-sm font-medium">Shoonya Setup Guide</span>
+                          </div>
+                          <ul className="text-blue-600 text-xs space-y-1">
+                            <li>• Get API credentials from Shoonya developer portal</li>
+                            <li>• Vendor code is usually provided by Shoonya</li>
+                            <li>• App key is generated when you create an API app</li>
+                            <li>• IMEI can be any unique device identifier</li>
+                          </ul>
+                        </div>
+                      </>
+                    )}
 
                     <div className="flex space-x-4">
                       <motion.button

@@ -17,6 +17,12 @@ const Brokers: React.FC = () => {
       features: ['Real-time execution', 'Advanced API', 'Multi-asset trading']
     },
     {
+      name: 'Shoonya',
+      logo: '🚀',
+      description: 'Zero brokerage trading platform with comprehensive API support',
+      features: ['Zero brokerage', 'Advanced API', 'Multi-segment trading']
+    },
+    {
       name: '5Paisa',
       logo: '💎',
       description: 'Cost-effective trading with comprehensive market access',
