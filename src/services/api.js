@@ -2,11 +2,6 @@ import axios from 'axios';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001/api';
 
-console.log('🔧 API Configuration:', {
-  baseURL: API_BASE_URL,
-  environment: import.meta.env.MODE
-});
-
 // Create axios instance with better error handling
 const api = axios.create({
   baseURL: API_BASE_URL,
@@ -14,7 +9,6 @@ const api = axios.create({
     'Content-Type': 'application/json',
   },
   timeout: 30000, // 30 second timeout
-  withCredentials: true // Important for CORS
 });
 
 // Add auth token to requests
@@ -129,11 +123,31 @@ export const brokerAPI = {
     }
   },
   
-  // Shoonya specific endpoints
-  validateShoonyaCredentials: (data) => api.post('/broker/shoonya/validate', data),
-  getShoonyaLoginUrl: (connectionId) => api.get(`/broker/shoonya/${connectionId}/login-url`),
-  completeShoonyaAuth: (connectionId, authCode) => api.post(`/broker/shoonya/${connectionId}/complete-auth`, { authCode }),
-  refreshShoonyaToken: (connectionId) => api.post(`/broker/shoonya/${connectionId}/refresh-token`),
+  // Angel Broking manual authentication
+  angelAuth: async (data) => {
+    try {
+      console.log('👼 Angel Broking manual authentication for connection:', data.connectionId);
+      const response = await api.post('/broker/auth/angel/login', data);
+      console.log('✅ Angel authentication successful:', response.data);
+      return response;
+    } catch (error) {
+      console.error('❌ Angel authentication failed:', error);
+      throw error;
+    }
+  },
+  
+  // Shoonya manual authentication
+  shoonyaAuth: async (data) => {
+    try {
+      console.log('🚀 Shoonya manual authentication for connection:', data.connectionId);
+      const response = await api.post('/broker/auth/shoonya/login', data);
+      console.log('✅ Shoonya authentication successful:', response.data);
+      return response;
+    } catch (error) {
+      console.error('❌ Shoonya authentication failed:', error);
+      throw error;
+    }
+  },
 };
 
 // Enhanced Orders API - Updated for Node.js Express endpoints
