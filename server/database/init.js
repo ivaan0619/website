@@ -179,6 +179,11 @@ export const initDatabase = async () => {
         api_key TEXT NOT NULL,
         api_secret TEXT NOT NULL,
         user_id_broker TEXT,
+        password TEXT, -- For Shoonya login password (encrypted)
+        two_fa TEXT, -- For Shoonya 2FA/PIN (encrypted)
+        vendor TEXT, -- For Shoonya vendor code
+        app_key TEXT, -- For Shoonya app key (encrypted)
+        imei TEXT, -- For Shoonya IMEI
         access_token TEXT,
         public_token TEXT,
         access_token_expires_at INTEGER, -- Unix timestamp for token expiry
